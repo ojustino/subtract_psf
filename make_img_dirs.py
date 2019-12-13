@@ -73,6 +73,10 @@ try:
     if args.oversample is None:
         args.oversample = 4
 
+    # set default pointing error if not specified by user
+    if args.pnt_err is None:
+        args.pnt_err = True
+
 except Exception as err:
     parser.print_help()
     raise err
