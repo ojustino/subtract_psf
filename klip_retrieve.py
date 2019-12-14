@@ -643,7 +643,7 @@ class SubtractImages():
         wvlnth_labels = [key for key
                          in list(self.stackable_cubes[0][1].header.keys())
                          # first index of stackable_cubes above shouldn't matter
-                         if key.startswith('WAVELN')]
+                         if key.startswith('WVLN') or key.startswith('WAVELN')]
 
         for i, img in enumerate(klip_proj):
             img.name = 'TARGET' + str(i)
@@ -787,7 +787,7 @@ class SubtractImages():
         wvlnth_labels = [key for key
                          in list(self.stackable_cubes[0][1].header.keys())
                          # first index of stackable_cubes shouldn't matter
-                         if key.startswith('WAVELN')]
+                         if key.startswith('WVLN') or key.startswith('WAVELN')]
 
         for num, entry in enumerate(pre_prof_hdu):
             entry.name = 'TARGET' + str(num)
@@ -828,8 +828,12 @@ class SubtractImages():
 
                 # calculate photon noise contribution at current wavelength
                 # (it has Poisson-type error, so noise is sqrt(N))
-                curr_wv = prj_hdu[0].header[f"WAVELN{sl:02d}"] * u.m
-                # index of prj_hdu shouldn't matter
+                try: # header name varies with number of slices
+                    curr_wv = prj_hdu[0].header[f"WAVELN{sl:02d}"] * u.m
+                    # index of prj_hdu shouldn't matter
+                except KeyError:
+                    curr_wv = prj_hdu[0].header[f"WVLN{sl:04d}"] * u.m
+
                 num_phot = self._count_photons(wv=curr_wv, dist=40*u.pc)
                 phot_noise_frac = np.sqrt(num_phot) / num_phot
 
@@ -868,6 +872,34 @@ class SubtractImages():
                 to_post_prof_hdu.append(np.stack((rad, post_prof)))
                 to_photon_prof_hdu.append(np.stack((rad, photon_prof)))
                 to_pre_avg_hdu.append(np.stack((rad2, pre_avg)))
+
+            # save location of this image's brightest pixel for future use
+            # (all slices of the same image should have same bright pixel)
+            pre_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, Y direction")
+            post_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, Y direction")
+            photon_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, Y direction")
+            pre_avg_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, Y direction")
+
+            pre_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, X direction")
+            post_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, X direction")
+            photon_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, X direction")
+            pre_avg_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+                                                    'brightest pixel in '
+                                                    f"TARGET{im}, X direction")
 
             # append the current image's data in each hdulist's matching entry
             pre_prof_hdu[im].data = np.array(to_pre_prof_hdu)
@@ -948,10 +980,14 @@ class SubtractImages():
             curr_col = magma_slice(wv_slices[i] / (num_wv - 1))
 
             # record the wavelength (in microns) of the current curves
-            curr_wv = self.pre_prof_hdu[0].header['WAVELN' +
-                                                  f"{wv_slices[i]:02d}"] * 1e6
-            # (index of pre_prof above shouldn't matter,
-            #  and could have used any of the four hdulists)
+            try: # header name varies with number of slices
+                curr_wv = self.pre_prof_hdu[0].header['WAVELN'
+                                                      + f"{wv_slices[i]:02d}"]
+                # (specific hdu and index used above shouldn't matter)
+            except KeyError:
+                curr_wv = self.pre_prof_hdu[0].header['WVLN'
+                                                      + f"{wv_slices[i]:04d}"]
+            curr_wv *= 1e6
 
             # plot contrast needed for obvious companion detections
             # as a function of radius
