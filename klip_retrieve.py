@@ -13,6 +13,7 @@ from astropy.constants import codata2014 as const
 from astropy.modeling.blackbody import blackbody_lambda
 from astropy.io import fits
 from astropy import units as u
+from functools import reduce
 
 
 class AlignImages():
@@ -861,7 +862,7 @@ class SubtractImages():
 
                 # limit stddev measurements to points with non-NaN contrasts
                 # (eliminates vertical line that appears in some plots)
-                nonz = np.nonzero(pre_prof > 0)
+                nonz = np.flatnonzero(pre_prof > 0)
 
                 rad = rad[nonz]
                 pre_prof = pre_prof[nonz]; post_prof = post_prof[nonz]
@@ -902,10 +903,52 @@ class SubtractImages():
                                                     f"TARGET{im}, X direction")
 
             # append the current image's data in each hdulist's matching entry
-            pre_prof_hdu[im].data = np.array(to_pre_prof_hdu)
-            post_prof_hdu[im].data = np.array(to_post_prof_hdu)
-            photon_prof_hdu[im].data = np.array(to_photon_prof_hdu)
-            pre_avg_hdu[im].data = np.array(to_pre_avg_hdu)
+            for att in range(2):
+                try:
+                    pre_prof_hdu[im].data = np.array(to_pre_prof_hdu)
+                    post_prof_hdu[im].data = np.array(to_post_prof_hdu)
+                    photon_prof_hdu[im].data = np.array(to_photon_prof_hdu)
+                    pre_avg_hdu[im].data = np.array(to_pre_avg_hdu)
+
+                    if att != 0:
+                        print('trim successful.')
+                    break
+                # if array conversion throws an error (typically for different-
+                # length entries), only keep separations common to each slice
+                # (retry after the except clause to the error was remedied)
+                except ValueError as e:
+                    if att != 0:
+                        raise(e)
+
+                    print('\ndifferent length radial_profile results in '
+                          f"image {im}; attempting trim...")
+
+                    # save radii from std and avg calculations separately
+                    rad_std = [r[0] for r in to_pre_prof_hdu]
+                    rad_avg = [r[0] for r in to_pre_avg_hdu]
+
+                    # find radii that are present in all slices of each array
+                    shared_rad_std = reduce(np.intersect1d, rad_std)
+                    shared_rad_avg = reduce(np.intersect1d, rad_avg)
+
+                    # mark the corresponding indices in each slice
+                    keep_std = [np.in1d(r, shared_rad_std) for r in rad_std]
+                    keep_avg = [np.in1d(r, shared_rad_avg) for r in rad_avg]
+
+                    # re-stack the contrast/separation array, now only keeping
+                    # the separations marked above and their matching contrasts
+                    to_pre_prof_hdu = [np.stack((rad_std[i][k],
+                                                 to_pre_prof_hdu[i][1][k]))
+                                       for i, k in enumerate(keep_std)]
+                    to_post_prof_hdu = [np.stack((rad_std[i][k],
+                                                  to_post_prof_hdu[i][1][k]))
+                                       for i, k in enumerate(keep_std)]
+                    to_photon_prof_hdu= [np.stack((rad_std[i][k],
+                                                   to_photon_prof_hdu[i][1][k]))
+                                       for i, k in enumerate(keep_std)]
+                    to_pre_avg_hdu = [np.stack((rad_avg[i][k],
+                                                to_pre_avg_hdu[i][1][k]))
+                                       for i, k in enumerate(keep_avg)]
 
         #print(time.time() - start, 's')
         return pre_prof_hdu, post_prof_hdu, photon_prof_hdu, pre_avg_hdu
