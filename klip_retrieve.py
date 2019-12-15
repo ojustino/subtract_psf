@@ -648,8 +648,9 @@ class SubtractImages():
 
         for i, img in enumerate(klip_proj):
             img.name = 'TARGET' + str(i)
-            for key in wvlnth_labels:
-                klip_proj[img].header[key] = self.stackable_cubes[0][1].header[key]
+            for j, key in enumerate(wvlnth_labels):
+                img.header[key] = (self.stackable_cubes[0][1].header[key],
+                                   f"wavelength of image slice {j:,}")
                 # first index of stackable_cubes above shouldn't matter
 
         # carry out klip projections for all slices of every target image
@@ -714,8 +715,9 @@ class SubtractImages():
 
         for num, entry in enumerate(pre_prof_hdu):
             entry.name = 'TARGET' + str(num)
-            for key in wvlnth_labels:
-                entry.header[key] = self.stackable_cubes[0][1].header[key]
+            for j, key in enumerate(wvlnth_labels):
+                entry.header[key] = (self.stackable_cubes[0][1].header[key],
+                                     f"wavelength of image slice {j:,}")
                 # first index of stackable_cubes above shouldn't matter
 
         # copy the first contrast/separation hdulist to create the rest,
