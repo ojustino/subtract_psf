@@ -39,7 +39,7 @@ class AlignImages():
     self.plot_shifts() helps visualize the progression of these alignment
     procedures by plotting the first and last steps.
 
-    MAKE SURE self._align_images_old() and self._align_images() ALWAYS PRODUCE IDENTICAL RESULTS
+    MAKE SURE self._align_brights_old() and self._align_brights() ALWAYS PRODUCE IDENTICAL RESULTS
     '''
 
     def __init__(self):
@@ -668,84 +668,6 @@ class SubtractImages():
 
         return klip_proj
 
-    def plot_subtraction(self, target_image=0, wv_slice=0,
-                         dir_name='', return_plot=False):
-        '''
-        Creates a four panel plot to demonstrate effect of subtraction.
-        Also prints pre- and post-subtraction intensity found in the scene.
-
-        Requried arguments allow for the user to select which target image
-        (from 0 to len(self.positions) - 1) and which wavelength slice (from 0
-        to len(self.stackable_cubes[WHICHEVER].data[1]) - 1) to display.
-
-        Optional arguments allow users to return the figure
-        (`return_plot=True`) or save it to disk (`dir_name=PATH/TO/DIR`), but
-        not both.
-
-        The subtraction is done by using the required arguments to index the
-        HDUList from returned by self._generate_klip_proj() to get the
-        appropriate KLIP projection of the chosen target.
-
-        The plot is as follows:
-        1) target image; 2) KLIP-projected ref. image (same scale for 1 & 2);
-        3) target image; 4) target minus ref. image (same scale for 3 & 4).
-        '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n')
-
-        # retrieve the proper wavelength of the target image with its projection
-        non_pad_ind = self.best_pixels
-        tgt_image = self.stackable_cubes[len(self.positions)
-                                         + target_image][1].data[wv_slice]
-        tgt_image = tgt_image[non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                              non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
-
-        proj = self.klip_proj[target_image].data[wv_slice]
-
-        fig, axs = plt.subplots(2, 2, figsize=(15, 15))
-        # panel 1
-        img = axs[0, 0].imshow(tgt_image,
-                               norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
-                               cmap=plt.cm.magma)
-        axs[0, 0].plot(12, 13, marker='+', color='#1d1160', mew=2)
-        fig.colorbar(img, ax=axs[0, 0])
-        axs[0, 0].set_title('observed target', size=22)
-
-        # panel 2
-        img = axs[0, 1].imshow(proj,
-                               norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
-                               cmap=plt.cm.magma)
-        axs[0, 1].plot(12, 13, marker='+', color='#1d1160', mew=2)
-        fig.colorbar(img, ax=axs[0, 1])
-        axs[0, 1].set_title('klipped target', size=22)
-
-        # panel 3
-        img = axs[1, 0].imshow(tgt_image, vmin=-0.0000, vmax=0.0001,
-                               cmap=plt.cm.magma)
-        fig.colorbar(img, ax=axs[1, 0])
-        axs[1, 0].set_title('observed target', size=22)
-
-        # panel 4
-        img = axs[1, 1].imshow(tgt_image - proj, vmin=-0.0000, vmax=0.0001,
-                               cmap=plt.cm.magma)
-        fig.colorbar(img, ax=axs[1, 1])
-        axs[1, 1].set_title('observed minus klipped', size=22)
-
-        print_ast(f"total intensity pre-subtract:  {tgt_image.sum():.4e}\n"
-                  f"total intensity post-subtract: {np.abs(tgt_image - proj).sum():.4e}")
-
-        if return_plot:
-            return axs
-
-        if dir_name:
-            plt.savefig(dir_name
-                        + ('/' if not dir_name.endswith('/') else '')
-                        + 'image' + str(target_image) + '_slice' + str(wv_slice)
-                        + '_subtraction.png', dpi=300)
-
-        plt.show()
-
     def _generate_contrasts(self):
         '''
         Generate and return HDULists containing contrast/separation curves for
@@ -953,6 +875,234 @@ class SubtractImages():
         #print(time.time() - start, 's')
         return pre_prof_hdu, post_prof_hdu, photon_prof_hdu, pre_avg_hdu
 
+    def inject_companion(self, times_sigma=5):
+        '''
+        Create a new HDUList, `self.injected_cubes`, where every slice of each
+        target images from `self.stackable_cubes` has been injected with a
+        synthetic, randomly placed companion.
+
+        Argument `times_sigma` controls the brightness of the companion
+        relative to the standard deviation of pixel intensity at its radial
+        distance from the star. (Radial profile information comes from
+        `self.pre_prof_hdu`.)
+
+        Its location changes each time this method is run and is purposely kept
+        from being too close to the star or the edge of the frame.
+
+        The user can then subtract corresponding slices of `self.klip_proj`
+        from the HDUList produced by this method and determine whether the
+        generated companion is recoverable.
+        '''
+        print_ast = lambda text: print('\n********',
+                                           text,
+                                           '********', sep='\n')
+        print_ast('injecting companion with (location-specific) '
+                  f"{times_sigma}-sigma intensity...")
+
+        # retrieve appropriate target image/slice based on arguments
+        non_pad_ind = self.best_pixels
+
+        tgt_images = np.array([cube[1].data for cube
+                               in self.stackable_cubes[len(self.positions):]])
+        tgt_images = tgt_images[:, :, non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
+                                non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
+
+        # create HDUList that will the hold new, injected target images
+        # (using klip_proj means slices will already have dimensions of non_pad_ind) # REVISIT AFTER CHANGING STACKABLE CUBES
+        injected_cubes = copy.deepcopy(self.klip_proj)
+
+        # get location of star in each image
+        # (all slices of an image should have the same position)
+        star_ys = np.array([i.header['PIXSTARY'] for i in self.pre_prof_hdu])
+        star_xs = np.array([i.header['PIXSTARX'] for i in self.pre_prof_hdu])
+
+        # record extreme positions on each axis
+        # (we aligned images earlier, so range for each axis should be <= 1)
+        star_min_y = star_ys.min(); star_max_y = star_ys.max()
+        star_min_x = star_xs.min(); star_max_x = star_xs.max()
+
+        # begin process of randomly selecting companion location
+        pixels_y = np.arange(tgt_images.shape[-2])
+        pixels_x = np.arange(tgt_images.shape[-1])
+
+        # limit to pixels that aren't right next to the star or at the edge
+        # (ALSO assumes the star will never be near the edge -- seems safe?)
+        edge_gap = 3; st_gap = 2 #pixels
+        poss_y = np.delete(pixels_y,
+                           np.s_[star_min_y-st_gap : star_max_y+st_gap])
+        poss_x = np.delete(pixels_x,
+                           np.s_[star_min_x-st_gap : star_max_x+st_gap])
+
+        poss_y = poss_y[edge_gap:-edge_gap]
+        poss_x = poss_x[edge_gap:-edge_gap]
+
+        # calculate mean star pixel position (essentially the mode of each axis)
+        star_pix_y = star_ys.mean().round().astype(int)
+        star_pix_x = star_xs.mean().round().astype(int)
+
+        # randomly select companion location from remaining pixels
+        comp_pix_y = np.random.choice(poss_y)
+        comp_pix_x = np.random.choice(poss_x)
+
+        # get contrasts at radial separation between star and companion
+        # (due to all earlier realignment, we should be able to inject into
+        #  the same pixel of each slice without further adjustment)
+        pix_len = .1 #arcseconds
+        dist_y = abs(np.round(comp_pix_y - star_pix_y)) * pix_len #arcseconds
+        dist_x = abs(np.round(comp_pix_x - star_pix_x)) * pix_len #arcseconds
+
+        for im in range(tgt_images.shape[0]):
+            for sl in range(tgt_images.shape[1]):
+                # get contrast/separation info (pre-subtraction) for this slice
+                separations = self.pre_prof_hdu[im].data[sl][0]
+                contrasts = self.pre_prof_hdu[im].data[sl][1]
+
+                # get contrasts at radial separation between star and companion
+                rad_dist_ind = np.argmin(abs(separations - max(dist_y, dist_x)))
+                comp_contrast = contrasts[rad_dist_ind] * times_sigma
+
+                # simulate the addition of a companion to the frame by copying
+                # the image and multiplying it by the companion's contrast
+                tgt_slice = tgt_images[im][sl]
+                comp_slice = tgt_slice.copy() * comp_contrast
+
+                # roll bright pixel to previously chosen companion location
+                comp_slice = np.roll(comp_slice, comp_pix_x-star_pix_x, axis=1)
+                comp_slice = np.roll(comp_slice, comp_pix_y-star_pix_y, axis=0)
+
+                # add both images together and complete the simulated injection
+                injected_cubes[im].data[sl] = tgt_slice + comp_slice
+
+            # add companions' location info to header
+            injected_cubes[im].header['PIXCOMPY'] = comp_pix_y
+            injected_cubes[im].header['PIXCOMPX'] = comp_pix_x
+
+        return injected_cubes
+
+    def plot_subtraction(self, target_image=0, wv_slice=0, companion=False,
+                         dir_name='', return_plot=False):
+        '''
+        Creates a four panel plot to demonstrate effect of subtraction.
+        Also prints pre- and post-subtraction intensity measured in the scene.
+
+        Requried arguments allow for the user to select which target image
+        (from 0 to len(self.positions) - 1) and which wavelength slice (from 0
+        to len(self.stackable_cubes[WHICHEVER].data[1]) - 1) to display
+
+        When companion=True, the plots show the effect of our subtraction on
+        companion detection. Can you see it? (NEED WAY TO ADJUST SCALING BASED ON times_sigma)
+
+        Optional arguments allow users to return the figure
+        (`return_plot=True`) or save it to disk (`dir_name=PATH/TO/DIR`), but
+        not both.
+
+        The subtraction is done by using the required arguments to index the
+        HDUList from returned by self._generate_klip_proj() to get the
+        appropriate KLIP projection of the chosen target.
+
+        The plot is as follows:
+        1) target image; 2) KLIP-projected ref. image (same scale for 1 & 2);
+        3) target image; 4) target minus ref. image (same scale for 3 & 4).
+        '''
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n')
+
+        # retrieve the proper wavelength of the target image with its projection
+        if companion:
+            img = self.injected_cubes[target_image]
+            tgt_image = img.data[wv_slice]
+
+            # get companion's location
+            comp_pix_y = img.header['PIXCOMPY']
+            comp_pix_x = img.header['PIXCOMPX']
+        else:
+            non_pad_ind = self.best_pixels
+            tgt_image = self.stackable_cubes[len(self.positions)
+                                             + target_image][1].data[wv_slice]
+            tgt_image = tgt_image[non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
+                                  non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
+
+        proj = self.klip_proj[target_image].data[wv_slice]
+
+        # get star's location
+        star_pix_y = self.pre_prof_hdu[target_image].header['PIXSTARY']
+        star_pix_x = self.pre_prof_hdu[target_image].header['PIXSTARX']
+
+        # build the plot
+        fig, axs = plt.subplots(2, 2, figsize=(15, 15))
+        loc = mpl.ticker.MultipleLocator(base=5)
+
+        # panel 1
+        curr_ax = axs[0, 0]
+        img = curr_ax.imshow(tgt_image,
+                             norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
+                             cmap=plt.cm.magma)
+        curr_ax.plot(star_pix_x, star_pix_y,
+                     marker='+', color='#1d1160', markersize=4**2, mew=2)
+        cbar = fig.colorbar(img, ax=curr_ax)
+        cbar.ax.tick_params(labelsize=16)
+        curr_ax.tick_params(axis='both', labelsize=15)
+        curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
+        curr_ax.yaxis.set_major_locator(loc)
+        curr_ax.set_title('observed target', size=22)
+
+        # panel 2
+        curr_ax = axs[0, 1]
+        img = curr_ax.imshow(proj,
+                             norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
+                             cmap=plt.cm.magma)
+        curr_ax.plot(star_pix_x, star_pix_y,
+                     marker='+', color='#1d1160', markersize=4**2, mew=2)
+        cbar = fig.colorbar(img, ax=curr_ax)
+        cbar.ax.tick_params(labelsize=16)
+        curr_ax.tick_params(axis='both', labelsize=15)
+        curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
+        curr_ax.yaxis.set_major_locator(loc)
+        curr_ax.set_title('klipped target', size=22)
+
+        # panel 3
+        curr_ax = axs[1, 0]
+        img = curr_ax.imshow(tgt_image, vmin=-0.0000, vmax=5e-4,
+                             cmap=plt.cm.magma)
+        if companion:
+            curr_ax.plot(comp_pix_x, comp_pix_y,
+                         marker='+', color='#008ca8', mew=2)
+        cbar = fig.colorbar(img, ax=curr_ax)
+        cbar.ax.tick_params(labelsize=16)
+        curr_ax.tick_params(axis='both', labelsize=15)
+        curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
+        curr_ax.yaxis.set_major_locator(loc)
+        curr_ax.set_title('observed target (again)', size=22)
+
+        # panel 4
+        curr_ax = axs[1, 1]
+        img = curr_ax.imshow(tgt_image - proj, vmin=-0.0000, vmax=5e-4,
+                             cmap=plt.cm.magma)
+        if companion:
+            curr_ax.plot(comp_pix_x, comp_pix_y,
+                         marker='+', color='#008ca8', mew=2)
+        cbar = fig.colorbar(img, ax=curr_ax)
+        cbar.ax.tick_params(labelsize=16)
+        curr_ax.tick_params(axis='both', labelsize=15)
+        curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
+        curr_ax.yaxis.set_major_locator(loc)
+        curr_ax.set_title('observed minus klipped', size=22)
+
+        print_ast(f"total intensity pre-subtract:  {tgt_image.sum():.4e}\n"
+                  f"total intensity post-subtract: {np.abs(tgt_image - proj).sum():.4e}")
+
+        if return_plot:
+            return axs
+
+        if dir_name:
+            plt.savefig(dir_name
+                        + ('/' if not dir_name.endswith('/') else '')
+                        + 'image' + str(target_image) + '_slice' + str(wv_slice)
+                        + '_subtraction.png', dpi=300)
+
+        plt.show()
+
     def plot_contrasts(self, target_image=0, wv_slices=None, times_sigma=5,
                        show_radial=True, return_plot=False, dir_name=''):
         '''
@@ -1127,13 +1277,14 @@ class KlipRetrieve(AlignImages, SubtractImages):
         self.terminal_call = self._get_og_call(dir_name)
         self.plot_shifts(dir_name)
 
-        # CHECK OVER THIS
         self.best_pixels = self._get_best_pixels(show_footprints=False)
         self.klip_proj = self._generate_klip_proj()
         # access already generated hdulists with contrast/separation curves
         # (each contains all available wavelengths)
         (self.pre_prof_hdu, self.post_prof_hdu,
          self.photon_prof_hdu, self.pre_avg_hdu) = self._generate_contrasts()
+
+        self.injected_cubes = self.inject_companion()
 
     def _retrieve_data_cubes(self, dir_name):
         '''
