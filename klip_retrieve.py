@@ -9,10 +9,11 @@ import time
 import warnings
 import webbpsf
 
+from astropy import units as u
 from astropy.constants import codata2014 as const
 from astropy.modeling.blackbody import blackbody_lambda
 from astropy.io import fits
-from astropy import units as u
+from astropy.visualization import ImageNormalize, SinhStretch
 from functools import reduce
 
 
@@ -1049,57 +1050,65 @@ class SubtractImages():
         # build the plot
         fig, axs = plt.subplots(2, 2, figsize=(15, 15))
         loc = mpl.ticker.MultipleLocator(base=5)
+        normed = mpl.colors.LogNorm(vmin=1e-5, vmax=1e0)
 
-        # panel 1
+        # panel 1 (target image)
         curr_ax = axs[0, 0]
-        img = curr_ax.imshow(tgt_image,
-                             norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
-                             cmap=plt.cm.magma)
+
         curr_ax.plot(star_pix_x, star_pix_y,
                      marker='+', color='#1d1160', markersize=4**2, mew=2)
-        cbar = fig.colorbar(img, ax=curr_ax)
+        panel = curr_ax.imshow(tgt_image, norm=normed, cmap=plt.cm.magma)
+
+        cbar = fig.colorbar(panel, ax=curr_ax)
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
         curr_ax.set_title('observed target', size=22)
 
-        # panel 2
+        # panel 2 (klip projection)
         curr_ax = axs[0, 1]
-        img = curr_ax.imshow(proj,
-                             norm=mpl.colors.LogNorm(vmin=1e-5, vmax=1e0),
-                             cmap=plt.cm.magma)
+
         curr_ax.plot(star_pix_x, star_pix_y,
                      marker='+', color='#1d1160', markersize=4**2, mew=2)
-        cbar = fig.colorbar(img, ax=curr_ax)
+        panel = curr_ax.imshow(proj, norm=normed, cmap=plt.cm.magma)
+
+        cbar = fig.colorbar(panel, ax=curr_ax)
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
         curr_ax.set_title('klipped target', size=22)
 
-        # panel 3
+        # panel 3 (target image again, different scaling)
         curr_ax = axs[1, 0]
-        img = curr_ax.imshow(tgt_image, vmin=-0.0000, vmax=5e-4,
-                             cmap=plt.cm.magma)
+
         if companion:
+            times_sigma = img.header['XSIGMA']
+            normed = ImageNormalize(vmin=-5e-4, vmax=times_sigma*1e-4,
+                                    stretch=SinhStretch())
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
-        cbar = fig.colorbar(img, ax=curr_ax)
+
+        panel = curr_ax.imshow(tgt_image, norm=normed, cmap=plt.cm.magma_r)
+
+        cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
         curr_ax.set_title('observed target (again)', size=22)
 
-        # panel 4
+        # panel 4 (target minus klip projection)
         curr_ax = axs[1, 1]
-        img = curr_ax.imshow(tgt_image - proj, vmin=-0.0000, vmax=5e-4,
-                             cmap=plt.cm.magma)
+
         if companion:
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
-        cbar = fig.colorbar(img, ax=curr_ax)
+
+        panel = curr_ax.imshow(tgt_image-proj, norm=normed, cmap=plt.cm.magma_r)
+
+        cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
