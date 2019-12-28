@@ -68,11 +68,11 @@ class AlignImages():
         can be shifted without rolling over an edge. The amount of padding to
         add on both axes is user-specified, and padded indices contain NaNs.
         '''
-        print(f'{cube_list[0][1].data.shape} data cube shape at beginning')
+        print(f"{cube_list[0][1].data.shape} data cube shape at beginning")
 
         # create NaN array with proper dimensions for necessary padding
         pad_x = int(abs(pad_x)); pad_y = int(abs(pad_y))
-        for i, cube in enumerate(cube_list):
+        for cube in cube_list:
             padded = np.full((len(self.wvlnths),
                               cube[1].data.shape[1] + pad_y * 2,
                               cube[1].data.shape[2] + pad_x * 2), np.nan)
@@ -87,7 +87,7 @@ class AlignImages():
             # replace the original ext 1 table with the new one
             cube[1].data = padded
 
-        print(f'{cube_list[0][1].data.shape} data cube shape at end',
+        print(f"{cube_list[0][1].data.shape} data cube shape at end",
               end='\n\n')
         return cube_list
 
@@ -218,7 +218,7 @@ class AlignImages():
             #if any(pix_offset > 1) or any(pix_offset < -1):
             if all(x not in [-1, 0, 1] for x in pix_offset):
                 warnings.warn('Offset greater than 1 pixel found between mean '
-                              'bright pixels in reference and science sets.'
+                              'bright pixels in reference and science sets. '
                               'Defaulting to _align_brights_old()')
                 return self._align_brights_old(multipad_cubes)
 
@@ -228,7 +228,7 @@ class AlignImages():
                                                   pix_offset[0], pix_offset[1])
 
             # make the adjustment and align the ref & sci images as best we can
-            for i, cube in enumerate(stackable_cubes[:len(stackable_cubes)//2]):
+            for cube in stackable_cubes[:len(self.positions)]:
                 cube[1].data = np.roll(cube[1].data, pix_offset[0], axis=2)
                 cube[1].data = np.roll(cube[1].data, pix_offset[1], axis=1)
                 # note that axis 0 is the wavelength dimension
@@ -286,12 +286,8 @@ class AlignImages():
               f"{pythag_sep:.4f} arcseconds")
 
         if reshift:
-            # The goal here is to shift the ref images to each of the four pixels
-            # around (0, 0), then save the resulting separations from sci images.
-
-            # add padding before shifting (for ALL cubes)
-            stackable_cubes = self._pad_cube_list(copy.deepcopy(multipad_cubes),
-                                                  1, 1)
+            # Shift the ref images to each of the four pixels around (0, 0),
+            # choosing the one with the smallest dist from the sci images
 
             # pre-create arrays to store distances for each case and the
             # adjustment made to ref_means used to get there
@@ -325,7 +321,6 @@ class AlignImages():
 
             # save the ref_means adjustment that minimizes trans-set separation
             closest_dist = shifts[np.argmin(dists)]
-            print(closest_dist)
             # (note that dists[-1] is the original ref_xs/ref_ys)
 
             print('post-alignment separation is '
@@ -359,7 +354,7 @@ class AlignImages():
             ax.axhline(i*0.1, ls=':')
             ax.axvline(i*0.1, ls=':')
 
-        # plot ideal, errorless dither cycle position
+        # plot ideal, errorless dither cycle positions
         ax.scatter(self.positions[:,0], self.positions[:,1],
                     marker='+', color='#d4bd8a', lw=10, s=4**2,
                     label='original, errorless dither cycle')
@@ -899,7 +894,7 @@ class SubtractImages():
                                            text,
                                            '********', sep='\n')
         print_ast('injecting companion with (location-specific) '
-                  f"{times_sigma}-sigma intensity...")
+                  f"{times_sigma}-sigma intensity.")
 
         # retrieve appropriate target image/slice based on arguments
         non_pad_ind = self.best_pixels
@@ -1286,6 +1281,7 @@ class KlipRetrieve(AlignImages, SubtractImages):
         (self.pre_prof_hdu, self.post_prof_hdu,
          self.photon_prof_hdu, self.pre_avg_hdu) = self._generate_contrasts()
 
+        # create a new set of target images with an injected companion
         self.injected_cubes = self.inject_companion()
 
     def _retrieve_data_cubes(self, dir_name):
