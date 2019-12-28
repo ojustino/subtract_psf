@@ -795,29 +795,29 @@ class SubtractImages():
 
             # save location of this image's brightest pixel for future use
             # (all slices of the same image should have same bright pixel)
-            pre_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+            pre_prof_hdu[im].header['PIXSTARY'] = (norm_ind[1],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, Y direction")
-            post_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+            post_prof_hdu[im].header['PIXSTARY'] = (norm_ind[1],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, Y direction")
-            photon_prof_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+            photon_prof_hdu[im].header['PIXSTARY'] = (norm_ind[1],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, Y direction")
-            pre_avg_hdu[im].header[f"PIXSTARY"] = (norm_ind[1],
+            pre_avg_hdu[im].header['PIXSTARY'] = (norm_ind[1],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, Y direction")
 
-            pre_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+            pre_prof_hdu[im].header['PIXSTARX'] = (norm_ind[0],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, X direction")
-            post_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+            post_prof_hdu[im].header['PIXSTARX'] = (norm_ind[0],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, X direction")
-            photon_prof_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+            photon_prof_hdu[im].header['PIXSTARX'] = (norm_ind[0],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, X direction")
-            pre_avg_hdu[im].header[f"PIXSTARX"] = (norm_ind[0],
+            pre_avg_hdu[im].header['PIXSTARX'] = (norm_ind[0],
                                                     'brightest pixel in '
                                                     f"TARGET{im}, X direction")
 
@@ -970,11 +970,20 @@ class SubtractImages():
                 # add both images together and complete the simulated injection
                 injected_cubes[im].data[sl] = tgt_slice + comp_slice
 
-            # add companions' location info to header
-            injected_cubes[im].header['PIXCOMPY'] = comp_pix_y
-            injected_cubes[im].header['PIXCOMPX'] = comp_pix_x
+            # add companion's location info and intensity info to header
+            injected_cubes[im].header['PIXCOMPY'] = (comp_pix_y, 'brightest '
+                                                     'pixel in Y direction')
+            injected_cubes[im].header['PIXCOMPX'] = (comp_pix_x, 'brightest '
+                                                     'pixel in X direction')
+            injected_cubes[im].header['XSIGMA'] = (times_sigma, 'companion '
+                                                   'intensity div. by stddev')
 
-        return injected_cubes
+        # if an injection has already occurred, replace it with this new one
+        if hasattr(self, 'injected_cubes'):
+            self.injected_cubes = injected_cubes
+            print_ast('new, injected target images in `self.injected_cubes`.')
+        else:
+            return injected_cubes
 
     def plot_subtraction(self, target_image=0, wv_slice=0, companion=False,
                          dir_name='', return_plot=False):
