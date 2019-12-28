@@ -183,24 +183,28 @@ class AlignImages():
         offset for plotting in self.plot_shifts().)
         '''
         # collect reference and target images as separate arrays with all slices
-        ref_pre_bright = np.array([cube[1].data for cube
-                                   in multipad_cubes[:len(self.positions)]])
-        tgt_pre_bright = np.array([cube[1].data for cube
-                                   in multipad_cubes[len(self.positions):]])
+        ref_images = np.array([cube[1].data for cube
+                               in multipad_cubes[:len(self.positions)]])
+        tgt_images = np.array([cube[1].data for cube
+                               in multipad_cubes[len(self.positions):]])
 
         # for each set, find indices of brightest pixel in each cube's 0th slice
         # (all slices of a given image cube should have the same bright spot)
-        ref_bright_pixels = [np.unravel_index(np.nanargmax(ref_pre_bright[i][0]),
-                                              ref_pre_bright[i][0].shape)
-                             for i in range(ref_pre_bright.shape[0])]
-        tgt_bright_pixels = [np.unravel_index(np.nanargmax(tgt_pre_bright[i][0]),
-                                              tgt_pre_bright[i][0].shape)
-                             for i in range(tgt_pre_bright.shape[0])]
+        ref_bright_pixels = [np.unravel_index(np.nanargmax(ref_images[i][0]),
+                                              ref_images[i][0].shape)
+                             for i in range(ref_images.shape[0])]
+        tgt_bright_pixels = [np.unravel_index(np.nanargmax(tgt_images[i][0]),
+                                              tgt_images[i][0].shape)
+                             for i in range(tgt_images.shape[0])]
 
         # get mean pixel position of the brightest pixel among cubes in each set
         # (also, remembering that y comes before x, flip their orders)
         ref_mean_bright = np.mean(ref_bright_pixels, axis=0)[::-1]
         tgt_mean_bright = np.mean(tgt_bright_pixels, axis=0)[::-1]
+        print(ref_bright_pixels, tgt_bright_pixels, sep='\n')
+        print('r', ref_mean_bright, 't', tgt_mean_bright)
+        print('r', ref_mean_bright.round(), 't', tgt_mean_bright.round())
+        print(np.round(tgt_mean_bright - ref_mean_bright).astype(int))
 
         # calculate pixel offset between the two sets' mean bright pixels
         pix_offset = np.round(tgt_mean_bright - ref_mean_bright).astype(int)
@@ -240,7 +244,7 @@ class AlignImages():
         else:
             return multipad_cubes
 
-    def _align_brights_old(self, multipad_cubes):
+    def _align_brights_old(self, multipad_cubes, offsets_only=False):
         '''
         THIS IS THE OLD METHOD OF ALIGNING THE REFERENCE AND SCIENCE SETS.
         MARKED FOR ARCHIVAL IF THE NEW METHOD CONTINUES TO WORK.
@@ -305,12 +309,12 @@ class AlignImages():
                     ref_means[ind] -= pix_len
 
                     shifts[j] = shifts[j - 1]
-                    shifts[j][ind] += 1
+                    shifts[j][ind] -= 1
                 else:
                     ref_means[ind] += pix_len
 
                     shifts[j] = shifts[j - 1]
-                    shifts[j][ind] -= 1
+                    shifts[j][ind] += 1
 
                 dists[j] = np.sqrt((ref_means[0] - sci_xs)**2
                                    + (ref_means[1] - sci_ys)**2)
@@ -327,10 +331,17 @@ class AlignImages():
                   f"{'still notable at' if dists.min() < ideal_sep else ''}"
                   f" {dists.min():.4f} arcseconds")
 
+            if offsets_only:
+                return closest_dist
+
+            # add padding before shifting (for ALL cubes)
+            stackable_cubes = self._pad_cube_list(copy.deepcopy(multipad_cubes),
+                                                  1, 1)
+
             # make the adjustment and align the ref & sci images as best we can
-            for i, cube in enumerate(stackable_cubes[:len(stackable_cubes)//2]):
-                cube[1].data = np.roll(cube[1].data, -closest_dist[0], axis=2)
-                cube[1].data = np.roll(cube[1].data, -closest_dist[1], axis=1)
+            for cube in stackable_cubes[:len(self.positions)]:
+                cube[1].data = np.roll(cube[1].data, closest_dist[0], axis=2)
+                cube[1].data = np.roll(cube[1].data, closest_dist[1], axis=1)
                 # note that axis 0 is the wavelength dimension
                 # we're focused on x (2) and y (1) in the PSF
 
