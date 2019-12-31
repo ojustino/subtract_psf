@@ -46,21 +46,52 @@ class AlignImages():
     def __init__(self):
         self._shifted = False
 
-    def _remove_offsets(self):
+    def _remove_offsets(self, align_style):
         '''
-        Removes shifts in images due to dither cycle, overall pointing error in
-        both the reference and science sets of images. Then, makes sure both
-        sets are centered over the same pixel.
+        Removes shifts in images due to dither cycle in both the reference and
+        science sets of images. Then, makes sure both sets are centered over
+        the same pixel.
+
+        Argument `align_style` controls which method is used for alignment --
+        'theoretical' (default) removes overall pointing error and aligns
+        bright pixels afterward, while 'empirical1' and 'empirical2' skip
+        directly to bright pixel alignment.
+
+        'empirical1' aligns based on the mean brightest pixel in each data cube
+        -- even if particular slices have a bright pixel that's slightly
+        off-line. 'empirical2' chooses a target position the bright pixel and
+        shifts all slices of all data cubes to match it.
+
+        I believe that 'empirical2' should lead to better results than
+        'empirical1' since there won't be any off-line stragglers. The
+        comparison with 'theoretical' will be interesting to see.
         '''
         if self._shifted == True:
             raise ValueError('PSF images have already been shifted')
 
-        # remove offsets
+        # remove dither offsets
         self.padded_cubes = self._shift_dither_pos()
-        self.multipad_cubes = self._shift_overall_ptg(self.padded_cubes)
-        stackable_cubes = self._align_brights(self.multipad_cubes)
-        self._shifted = True
 
+        # either remove pointing error, then...
+        if align_style == 'theoretical' or align_style == 'empirical1':
+            self.multipad_cubes = self._shift_overall_ptg(self.padded_cubes)
+            if align_style == 'theoretical': # (old)
+                # ...calculate star's position and align
+                stackable_cubes = self._align_brights_old(self.multipad_cubes)
+            if align_style == 'empirical1': # (new)
+                # ...align based on mean brightest pixel in each set of images
+                # (even if particular slices are slightly offset)
+                stackable_cubes = self._align_brights_new(self.multipad_cubes)
+
+        # or shift all slice of all images so their bright pixels coincide
+        elif align_style == 'empirical2': # nu new
+            stackable_cubes = self.nu_align_brights_new(self.padded_cubes)
+
+        else:
+            raise ValueError("align_style must equal"
+                             "'theoretical', 'empirical1', 'empirical2'")
+
+        self._shifted = True
         return stackable_cubes
 
     def _pad_cube_list(self, cube_list, pad_x, pad_y):
@@ -106,8 +137,8 @@ class AlignImages():
         max_dith_x = dith_shifts[:,0].max()
         max_dith_y = dith_shifts[:,1].max()
 
-        # shifts due to uncertainty in dither cycle pointing (stddev .004 arcsec)
-        # are too small to shift for with the IFU's .1 arcsecond/pixel resolution
+        # shifts due to dither cycle's pointing uncertainty (stddev .004 arcsec)
+        # are too small to shift for with the IFU's .1 arcsecond/pix resolution
 
         # Add padding before undoing dithers
         padded_cubes = self._pad_cube_list(copy.deepcopy(self.data_cubes),
@@ -167,7 +198,7 @@ class AlignImages():
 
         return multipad_cubes
 
-    def _align_brights(self, multipad_cubes, offsets_only=False):
+    def _align_brights_new(self, multipad_cubes, offsets_only=False):
         '''
         After removing offsets in self._shift_dither_pos() and
         self._shift_overall_ptg(), follow a process similar to
@@ -220,7 +251,6 @@ class AlignImages():
         # if there is a pixel offset, shift the reference images to eliminate it
         if any(pix_offset != 0):
             # pix_offset values should only be 0 or +/-1; warn if not the case
-            #if any(pix_offset > 1) or any(pix_offset < -1):
             if all(x not in [-1, 0, 1] for x in pix_offset):
                 warnings.warn('Offset greater than 1 pixel found between mean '
                               'bright pixels in reference and science sets. '
@@ -348,6 +378,73 @@ class AlignImages():
 
         return stackable_cubes
 
+    def nu_align_brights_new(self, padded_cubes, offsets_only=False):
+        '''
+        ALTERNATE METHOD of alignment that tries to shift pixels only based on
+        what it sees empirically after self._shift_dither_pos() has removed the
+        dither offsets. (We may not know the other errors a priori, so the
+        other approach could be idealized to some extent.)
+
+        Argument `offsets_only` is used to return pixel offset for plotting in
+        self.plot_shifts().
+
+        The process is similar to those of  _generate_klip_proj() and
+        _generate_contrasts() in KlipRetrieve, which calculate the mean
+        positions of the brightest pixels from the reference and science images
+        and assume that to be the star's location.
+
+        If the two sets ended up centered on different pixels, shift the
+        reference images to overlap with the target images so they can be
+        stacked for PSF subtraction later.
+
+        NEEDS ITS OWN PLOTTING FUNCTION; STILL THINKING OF BEST WAY TO VISUALIZE. HEAT MAP?
+        '''
+        # collect reference and target images as separate arrays with all slices
+        ref_images = np.array([cube[1].data for cube
+                               in padded_cubes[:len(self.positions)]])
+        tgt_images = np.array([cube[1].data for cube
+                               in padded_cubes[len(self.positions):]])
+
+        # for each set, find indices of brightest pixel in each cube's 0th slice
+        # (all slices of a given image cube should have the same bright spot)
+        ref_bright_pixels = [np.unravel_index(np.nanargmax(ref_images[i][0]),
+                                              ref_images[i][0].shape)[::-1]
+                             for i in range(ref_images.shape[0])]
+        tgt_bright_pixels = [np.unravel_index(np.nanargmax(tgt_images[i][0]),
+                                              tgt_images[i][0].shape)[::-1]
+                             for i in range(tgt_images.shape[0])]
+
+        print(ref_bright_pixels, '\n', tgt_bright_pixels)
+
+        if offsets_only:
+            #print('r', ref_mean_bright, 't', tgt_mean_bright, 'off', pix_offset)
+            return ref_bright_pixels, tgt_bright_pixels
+
+        # save 0th tgt image's bright pixel as intended location in other images
+        chosen_pixel = tgt_bright_pixels[0]
+
+        # get distance of other images' bright pixels from that location
+        # (tgt_offsets[0] will be (0, 0) by construction)
+        all_offsets = (chosen_pixel
+                       - np.concatenate((ref_bright_pixels, tgt_bright_pixels)))
+
+        # pad by max separation of other images' bright pixels from chosen_pixel
+        max_off_y, max_off_x = all_offsets.max(axis=0)
+        print(max_off_y, max_off_x)
+        #max_off_y, max_off_x = np.maximum(ref_offsets, tgt_offsets).max(axis=0)
+        stackable_cubes = self._pad_cube_list(copy.deepcopy(padded_cubes),
+                                              max_off_y, max_off_x)
+
+        # shift other images so their bright pixels align with 0th target img's
+        for i, cube in enumerate(stackable_cubes):
+            if any(all_offsets[i] != 0): # ...if necessary
+                cube[1].data = np.roll(cube[1].data, all_offsets[i][0], axis=2)
+                cube[1].data = np.roll(cube[1].data, all_offsets[i][1], axis=1)
+                # note that axis 0 is the wavelength dimension
+                # we're focused on x (2) and y (1) in the PSF
+
+        return stackable_cubes
+
     def plot_shifts(self, dir_name='', return_plot=False):
         '''
         Compare the original mean stellar positions of each image in the
@@ -376,7 +473,7 @@ class AlignImages():
                  marker='s', color='#ce1141', alpha=.4,
                  linestyle=':', label='reference case pointings')
         ax.plot(self.draws_sci[:,0], self.draws_sci[:,1],
-                 marker='s', color='#1d1160', alpha=.4,
+                 marker='s', color='#13274f', alpha=.4,
                  linestyle=':', label='science case pointings')
 
         # What are the shifts due to the dither cycle?
@@ -412,7 +509,7 @@ class AlignImages():
                   - (dith_shifts + ptg_shifts_sci[0]) * pix_len)[:,0],
                  (self.draws_sci
                   - (dith_shifts + ptg_shifts_sci[1]) * pix_len)[:,1],
-                 marker='^', color='#1d1160',
+                 marker='^', color='#13274f',
                  linestyle=':', label='sci sans pnt. error & dither offsets')
 
         if return_plot:
@@ -422,6 +519,12 @@ class AlignImages():
         ax.set_ylabel('arcseconds', fontsize=14)
         leg = ax.legend(bbox_to_anchor=(1.04, 1), fontsize=14)
         plt.gca().set_aspect('equal')
+
+        # draw representations of NIRSpec pixels (.1 x .1 arcsecond)
+        #loc = mpl.ticker.MultipleLocator(base=.1)
+        #ax.xaxis.set_major_locator(loc)
+        #ax.yaxis.set_major_locator(loc)
+        #ax.grid(True, which='both', linestyle='--')
 
         if dir_name:
             plt.savefig(dir_name
@@ -490,9 +593,44 @@ class SubtractImages():
         present = [arr for arr
                    in np.where(coverage_map == coverage_map.max())][::-1]
         maxed_pixels = np.array(present)
-        non_pad_ind = [(i.min(), i.max()) for i in maxed_pixels]
+        best_pix = [(i.min(), i.max()) for i in maxed_pixels]
 
-        return non_pad_ind
+        # downsize images to their non-NaN pixels
+        for i, cube in enumerate(self.stackable_cubes):
+            cube[1].data = cube[1].data[:, best_pix[1][0] : best_pix[1][1] + 1,
+                                        best_pix[0][0] : best_pix[0][1] + 1]
+
+        print(f"{self.stackable_cubes[0][1].data.shape} "
+              'data cube shape after removing padding')
+
+        #return best_pix
+
+    def _flatten_hdulist(self):
+        sample_slice = self.stackable_cubes[0][1]
+        # first index of stackable_cubes above shouldn't matter
+
+        # create a new HDUList w/ the same length as self.stackable_cubes AND
+        # the same data shapes as the first index of each stackable_cubes entry
+        flat_hdu = fits.HDUList([cube[1] for cube in self.stackable_cubes])
+
+        # set up some header labels that list wavelength values at each slice
+        wvlnth_labels = [key for key
+                         in list(sample_slice.header.keys())
+                         if key.startswith('WVLN') or key.startswith('WAVELN')]
+
+        # place the labels in their corresponding HDUList entry headers
+        for i, img in enumerate(flat_hdu):
+            if i < len(self.positions):
+                img.name = 'REFERENCE' + str(i)
+            else:
+                img.name = 'TARGET' + str(i % len(self.positions))
+
+            for j, key in enumerate(wvlnth_labels):
+                img.header[key] = (sample_slice.header[key],
+                                   f"wavelength of image slice {j:,}")
+
+        #return flat_hdu
+        self.stackable_cubes = flat_hdu
 
     def _count_photons(self,
                        temp_star=6000*u.K, rad_star=1*u.solRad, dist=1.5*u.pc,
@@ -620,45 +758,21 @@ class SubtractImages():
                                        text,
                                        '********', sep='\n')
 
-        # get indices of never-padded (non-NaN) pixels
-        non_pad_ind = self.best_pixels
-
-        # collect all reference and target images in one 4D array.
-        # dimensions are... number of (ref or sci) images,
+        # collect all images in one 4D array.
+        # dimensions are: number of ref & tgt images,
         # number of wavelength slices, and the 2D shape of a post-padded image
-        refs_all = np.array([cube[1].data for cube
-                             in self.stackable_cubes[:len(self.positions)]])
-        tgts_all = np.array([cube[1].data for cube
-                             in self.stackable_cubes[len(self.positions):]])
+        all_cubes = np.array([cube.data for cube in self.stackable_cubes])
 
-        # slice the final 2D image slices to never-padded pixels only
-        refs_all = refs_all[:, :, non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                            non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
-        tgts_all = tgts_all[:, :, non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                            non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
+        # separate the reference and target images
+        refs_all = all_cubes[:len(self.positions)]
+        tgts_all = all_cubes[len(self.positions):]
 
         if verbose:
             print_ast(f"non-padded image shape: {refs_all.shape[2:]}")
 
         # set up hdulist of klip projections for all slices of all target images
-        # (length is the number of targets, each entry's dimensions should be
-        #  number of wavelength slices by the 2D shape of a post-padded image)
-        klip_proj = fits.HDUList([fits.PrimaryHDU(np.full(tgts_all.shape[1:],
-                                                          np.nan))
-                                  for n_img in range(tgts_all.shape[0])])
-
-        # set up some header labels that list wavelength values at each slice
-        wvlnth_labels = [key for key
-                         in list(self.stackable_cubes[0][1].header.keys())
-                         # first index of stackable_cubes above shouldn't matter
-                         if key.startswith('WVLN') or key.startswith('WAVELN')]
-
-        for i, img in enumerate(klip_proj):
-            img.name = 'TARGET' + str(i)
-            for j, key in enumerate(wvlnth_labels):
-                img.header[key] = (self.stackable_cubes[0][1].header[key],
-                                   f"wavelength of image slice {j:,}")
-                # first index of stackable_cubes above shouldn't matter
+        # (otherwise, has the same HDU structure as stackable_cubes)
+        klip_proj = copy.deepcopy(self.stackable_cubes[len(self.positions):])
 
         # carry out klip projections for all slices of every target image
         # and insert them into the HDUList generated above
@@ -699,43 +813,23 @@ class SubtractImages():
 
         SHOULD USER BE ABLE TO CHOOSE ARGUMENTS FOR _count_photons HERE?
         '''
-        # get indices of never-padded (non-NaN) pixels in target images
-        non_pad_ind = self.best_pixels
-
-        # collect all target images and projections at all wavelengths
-        tgt_images = np.array([cube[1].data for cube
+        # collect all slices of all target images in one array
+        tgt_images = np.array([cube.data for cube
                                in self.stackable_cubes[len(self.positions):]])
-        tgt_images = tgt_images[:, :, non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                                non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
 
+        # collect all slices of all KLIP projections in one array
         prj_hdu = self.klip_proj
         prj_images = np.array([cube.data for cube in prj_hdu])
 
-        # create the first contrast/separation hdulist to be filled,
-        # also setting up entry titles and header labels for wavelength
-        pre_prof_hdu = fits.HDUList([fits.PrimaryHDU() for im
-                                     in range(len(self.positions))])
-        wvlnth_labels = [key for key
-                         in list(self.stackable_cubes[0][1].header.keys())
-                         # first index of stackable_cubes shouldn't matter
-                         if key.startswith('WVLN') or key.startswith('WAVELN')]
-
-        for num, entry in enumerate(pre_prof_hdu):
-            entry.name = 'TARGET' + str(num)
-            for j, key in enumerate(wvlnth_labels):
-                entry.header[key] = (self.stackable_cubes[0][1].header[key],
-                                     f"wavelength of image slice {j:,}")
-                # first index of stackable_cubes above shouldn't matter
-
-        # copy the first contrast/separation hdulist to create the rest,
-        # which will have the same structure
+        # create contrast/separation HDUlists to be filled
+        # (will have same headers as stackable_cubes but data will change)
+        pre_prof_hdu = copy.deepcopy(self.stackable_cubes[len(self.positions):])
         post_prof_hdu = copy.deepcopy(pre_prof_hdu)
         photon_prof_hdu = copy.deepcopy(pre_prof_hdu)
         pre_avg_hdu = copy.deepcopy(pre_prof_hdu)
 
         # create a dummy hdulist to match poppy's expected format
-        # (len-3 for num. of unique images at a time for which we take profiles)
-        temp_hdu = fits.HDUList([copy.deepcopy(self.stackable_cubes[0][1])
+        temp_hdu = fits.HDUList([copy.deepcopy(self.data_cubes[0][1])
                                  for _ in range(3)])
 
         # calculate radial profiles at each wavelength, pre & post-subtraction,
@@ -754,7 +848,7 @@ class SubtractImages():
             for sl in range(n_slcs):
                 # get slice's max pixel value for contrast unit conversion;
                 # save indices to help center later radial profile calculations,
-                # remembering from non_pad_ind that y and x are flipped
+                # remembering that y and x are flipped
                 norm_ind = np.unravel_index(tgt_images[im][sl].argmax(),
                                             tgt_images[im][sl].shape)[::-1]
 
@@ -908,17 +1002,12 @@ class SubtractImages():
         print_ast('injecting companion with (location-specific) '
                   f"{times_sigma}-sigma intensity.")
 
-        # retrieve appropriate target image/slice based on arguments
-        non_pad_ind = self.best_pixels
-
-        tgt_images = np.array([cube[1].data for cube
+        # collect all slices of all target images in one array
+        tgt_images = np.array([cube.data for cube
                                in self.stackable_cubes[len(self.positions):]])
-        tgt_images = tgt_images[:, :, non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                                non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
 
         # create HDUList that will the hold new, injected target images
-        # (using klip_proj means slices will already have dimensions of non_pad_ind) # REVISIT AFTER CHANGING STACKABLE CUBES
-        injected_cubes = copy.deepcopy(self.klip_proj)
+        injected_cubes = copy.deepcopy(self.stackable_cubes[len(tgt_images):])
 
         # get location of star in each image
         # (all slices of an image should have the same position)
@@ -1008,7 +1097,7 @@ class SubtractImages():
         to len(self.stackable_cubes[WHICHEVER].data[1]) - 1) to display
 
         When companion=True, the plots show the effect of our subtraction on
-        companion detection. Can you see it? (NEED WAY TO ADJUST SCALING BASED ON times_sigma)
+        companion detection. Can you see it?
 
         Optional arguments allow users to return the figure
         (`return_plot=True`) or save it to disk (`dir_name=PATH/TO/DIR`), but
@@ -1035,11 +1124,8 @@ class SubtractImages():
             comp_pix_y = img.header['PIXCOMPY']
             comp_pix_x = img.header['PIXCOMPX']
         else:
-            non_pad_ind = self.best_pixels
             tgt_image = self.stackable_cubes[len(self.positions)
-                                             + target_image][1].data[wv_slice]
-            tgt_image = tgt_image[non_pad_ind[1][0] : non_pad_ind[1][1] + 1,
-                                  non_pad_ind[0][0] : non_pad_ind[0][1] + 1]
+                                             + target_image].data[wv_slice]
 
         proj = self.klip_proj[target_image].data[wv_slice]
 
@@ -1089,6 +1175,8 @@ class SubtractImages():
                                     stretch=SinhStretch())
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
+        else:
+            normed = ImageNormalize(vmin=-1e-4, vmax=5e-4)
 
         panel = curr_ax.imshow(tgt_image, norm=normed, cmap=plt.cm.magma_r)
 
@@ -1167,7 +1255,7 @@ class SubtractImages():
                                        '********', sep='\n')
 
         # set up default plotting case (show low, mid, and hi wavelengths)
-        num_wv = self.stackable_cubes[0][1].data.shape[0]
+        num_wv = self.stackable_cubes[0].shape[0]
         # (first index of stackable_cubes above shouldn't matter)
         if wv_slices is None:
             wv_slices = np.array([0, num_wv // 2, -1])
@@ -1190,8 +1278,6 @@ class SubtractImages():
 
         for i in range(len(wv_slices)):
             # what multiple of pre/post subtraction stddev are we tracking?
-            # (we're saying for now that 5-sig is an unamibguous detection --
-            #  **** CONFIRM THIS ONCE COMPANION INJECTION IS WRITTEN) ****
             pre_prof[i][1] *= times_sigma; post_prof[i][1] *= times_sigma
             photon_prof[i][1] *= times_sigma
 
@@ -1279,7 +1365,6 @@ class KlipRetrieve(AlignImages, SubtractImages):
 
     ********
     QUESTION: Should there be an argument for KlipCreate that indicates how many modes/percentage of variance to explain through KLIP?
-    ADD return_plot OPTION TO plot_shifts() IN AlignImages
     ********
 
     Arguments:
@@ -1292,21 +1377,33 @@ class KlipRetrieve(AlignImages, SubtractImages):
         and dither shifting. This is necessary if you want your cubes to be
         stackable, so don't skip it unless you're just trying to view the
         images and aren't concerned with PSF subtraction. (default: True)
+
+    align_style : str, optional
+        The method to use in aligning the images. Currently 'theoretical'
+        (default), 'empirical1', and 'empirical2'.
     '''
 
-    def __init__(self, dir_name, remove_offsets=True):
+    def __init__(self, dir_name, align_style='theoretical',
+                 remove_offsets=True):
         super().__init__()
 
-        self.data_cubes = self._retrieve_data_cubes(dir_name)
-        self.stackable_cubes = self._remove_offsets()
-
         self.terminal_call = self._get_og_call(dir_name)
-        self.plot_shifts(dir_name)
+        #self.plot_shifts(dir_name)
 
-        self.best_pixels = self._get_best_pixels(show_footprints=False)
+        # retrieve data cubes, and remove their offsets
+        self.data_cubes = self._retrieve_data_cubes(dir_name)
+        self.stackable_cubes = self._remove_offsets(align_style)
+
+        # remove self.stackable_cubes' padding so only non-NaN pixels remain...
+        self._get_best_pixels(show_footprints=False)
+
+        # then change it from a list of HDULists to one all-encompassing HDUList
+        self._flatten_hdulist()
+
+        # make KLIP projections of target images
         self.klip_proj = self._generate_klip_proj()
-        # access already generated hdulists with contrast/separation curves
-        # (each contains all available wavelengths)
+
+        # calc. HDULists of assorted contrast/separation data at all wavelengths
         (self.pre_prof_hdu, self.post_prof_hdu,
          self.photon_prof_hdu, self.pre_avg_hdu) = self._generate_contrasts()
 
