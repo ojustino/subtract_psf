@@ -429,7 +429,7 @@ class AlignImages():
                        - np.concatenate((ref_bright_pixels, tgt_bright_pixels)))
 
         # pad by max separation of other images' bright pixels from chosen_pixel
-        max_off_y, max_off_x = all_offsets.max(axis=0)
+        max_off_y, max_off_x = np.abs(all_offsets).max(axis=0)
         print(max_off_y, max_off_x)
         #max_off_y, max_off_x = np.maximum(ref_offsets, tgt_offsets).max(axis=0)
         stackable_cubes = self._pad_cube_list(copy.deepcopy(padded_cubes),
