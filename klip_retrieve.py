@@ -72,24 +72,23 @@ class AlignImages():
         # remove dither offsets
         self.padded_cubes = self._shift_dither_pos()
 
-        # either remove pointing error, then...
-        if align_style == 'theoretical' or align_style == 'empirical1':
+        # shift all slices of all images so their bright pixels coincide
+        if align_style == 'empirical2': # (newest)
+            stackable_cubes = self._align_brights_newest(self.padded_cubes)
+
+        # or remove pointing error, then....
+        else:
             self.multipad_cubes = self._shift_overall_ptg(self.padded_cubes)
             if align_style == 'theoretical': # (old)
                 # ...calculate star's position and align
                 stackable_cubes = self._align_brights_old(self.multipad_cubes)
-            if align_style == 'empirical1': # (new)
+            elif align_style == 'empirical1': # (newer)
                 # ...align based on mean brightest pixel in each set of images
                 # (even if particular slices are slightly offset)
                 stackable_cubes = self._align_brights_new(self.multipad_cubes)
-
-        # or shift all slice of all images so their bright pixels coincide
-        elif align_style == 'empirical2': # nu new
-            stackable_cubes = self.nu_align_brights_new(self.padded_cubes)
-
-        else:
-            raise ValueError("align_style must equal"
-                             "'theoretical', 'empirical1', 'empirical2'")
+            else:
+                raise ValueError("align_style must equal 'theoretical', "
+                                 "'empirical1', or 'empirical2'.")
 
         self._shifted = True
         return stackable_cubes
@@ -169,10 +168,10 @@ class AlignImages():
         print('commence removal of pointing error')
 
         # What are the shifts due to uncertainty in overall pointing?
-        # (1-sig is .25 arcseconds)
+        # (1-sig is .1 arcseconds)
         pix_len = .1 # length of IFU pixel in arcseconds
-        ptg_shifts_ref = np.round(self.point_err_ax[:2] / pix_len).astype(int)
-        ptg_shifts_sci = np.round(self.point_err_ax[2:] / pix_len).astype(int)
+        ptg_shifts_ref = np.round(self.point_err_ax[0] / pix_len).astype(int)
+        ptg_shifts_sci = np.round(self.point_err_ax[1] / pix_len).astype(int)
 
         max_ptg_x = np.abs([ptg_shifts_ref[0], ptg_shifts_sci[0]]).max()
         max_ptg_y = np.abs([ptg_shifts_ref[1], ptg_shifts_sci[1]]).max()
@@ -293,9 +292,9 @@ class AlignImages():
         dith_shifts = np.array(np.round(self.positions / .1), dtype=int)
 
         # What are the shifts due to uncertainty in overall pointing?
-        # (stddev is .25 arcseconds)
-        ptg_shifts_ref = np.round(self.point_err_ax[:2] / .1).astype(int)
-        ptg_shifts_sci = np.round(self.point_err_ax[2:] / .1).astype(int)
+        # (stddev is .1 arcseconds)
+        ptg_shifts_ref = np.round(self.point_err_ax[0] / .1).astype(int)
+        ptg_shifts_sci = np.round(self.point_err_ax[1] / .1).astype(int)
 
         # record mean positions of bright spots in ref and sci images
         pix_len = .1 # length of IFU pixel in arcseconds
@@ -378,7 +377,7 @@ class AlignImages():
 
         return stackable_cubes
 
-    def nu_align_brights_new(self, padded_cubes, offsets_only=False):
+    def _align_brights_newest(self, padded_cubes, offsets_only=False):
         '''
         ALTERNATE METHOD of alignment that tries to shift pixels only based on
         what it sees empirically after self._shift_dither_pos() has removed the
@@ -480,10 +479,10 @@ class AlignImages():
         dith_shifts = np.array(np.round(self.positions / .1), dtype=int)
 
         # What are the shifts due to uncertainty in overall pointing?
-        # (1-sig is .25 arcseconds)
-        ptg_shifts_ref = np.array(np.round(self.point_err_ax[:2] / .1),
+        # (1-sig is .1 arcseconds)
+        ptg_shifts_ref = np.array(np.round(self.point_err_ax[0] / .1),
                                  dtype=int)
-        ptg_shifts_sci = np.array(np.round(self.point_err_ax[2:] / .1),
+        ptg_shifts_sci = np.array(np.round(self.point_err_ax[1] / .1),
                                  dtype=int)
 
         # are the reference and science cases centered on the same pixel?
@@ -1267,7 +1266,7 @@ class SubtractImages():
         # (separation is index 0, contrast is index 1)
         pre_prof = self.pre_prof_hdu[target_image].data[wv_slices]
         post_prof = self.post_prof_hdu[target_image].data[wv_slices]
-        photon_prof = self.photon_prof_hdu[target_image].data[wv_slices]
+        #photon_prof = self.photon_prof_hdu[target_image].data[wv_slices]
         if show_radial:
             pre_avg = self.pre_avg_hdu[target_image].data[wv_slices]
 
@@ -1279,7 +1278,7 @@ class SubtractImages():
         for i in range(len(wv_slices)):
             # what multiple of pre/post subtraction stddev are we tracking?
             pre_prof[i][1] *= times_sigma; post_prof[i][1] *= times_sigma
-            photon_prof[i][1] *= times_sigma
+            #photon_prof[i][1] *= times_sigma
 
             # map colors to curves by wavelength
             curr_col = magma_slice(wv_slices[i] / (num_wv - 1))
@@ -1311,10 +1310,10 @@ class SubtractImages():
                         #alpha=.1,
                        linestyle=(0, (3, 10)), c=curr_col) # looser dotting
 
-            ax.plot(photon_prof[i][0], photon_prof[i][1],
-                    label=f"pre-sub phot. noise @{curr_wv:.2f} $\mu$m",
-                    linestyle=(0, (2, 2)), c=curr_col)
-            #### REMEMBER TO MENTION WHAT KIND OF STAR WAS USED FOR PHOTON NOISE CALCULATION IN PLOT LEGEND
+            # ax.plot(photon_prof[i][0], photon_prof[i][1],
+            #         label=f"pre-sub phot. noise @{curr_wv:.2f} $\mu$m",
+            #         linestyle=(0, (2, 2)), c=curr_col)
+            # #### REMEMBER TO MENTION WHAT KIND OF STAR WAS USED FOR PHOTON NOISE CALCULATION IN PLOT LEGEND
 
             print_ast(f"1 arcsecond contrast @{curr_wv:.2f} microns\n"
                       f"pre-sub:  {pre_prof[i][1][np.argmin(np.abs(pre_prof[i][0] - 1))]:.4e}"

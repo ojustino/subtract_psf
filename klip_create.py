@@ -51,7 +51,7 @@ class KlipCreate():
 
     pointing_error : bool, optional
         Whether to include a randomly drawn offset in each set of images
-        resulting from JWST's overall pointing uncertainty of .25 arcseconds.
+        resulting from JWST's overall pointing uncertainty of .1 arcseconds.
         (default: True)
 
     oversample : int
