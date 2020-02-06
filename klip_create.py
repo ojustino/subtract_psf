@@ -22,7 +22,8 @@ class KlipCreate():
     each centered on (0, 0) (before accounting for pointing error). Each set
     must have the same number of images.
 
-    Directories also include `attr.pkl`, afile with instrument information saved from this class' attributes (dither positions, errors, etc.), and
+    Directories also include `attr.pkl`, a file with instrument information
+    saved from this class' attributes (dither positions, errors, etc.), and
     `original_call.pkl`, which contains the terminal call used to create this
     class if you did so through `make_img_dir.py`.
 
@@ -77,7 +78,7 @@ class KlipCreate():
 
         # wavelength range and resolution considered for PSFs in microns
         # (taken from grating/disperser 395H and filter 290LP)
-        # CHANGE TO INCORPORATE ASTROPY UNITS, MAKE CORRESPONDING CHANGE IN _count_photons IN klip_retrieve.py
+        # CHANGE TO INCORPORATE ASTROPY UNITS, MAKE CORRESPONDING CHANGE IN _count_photons IN klip_retrieve.py?
         self.lo_wv = 2.87e-6
         self.hi_wv = 5.14e-6
         self.resolve_pwr = 2700
@@ -123,15 +124,6 @@ class KlipCreate():
                                        oversample=oversample),
                                [new_dir + str(i) for i in range(num_dir)])
 
-        # OLD: generate uncertainties for reference and science cases,
-        # add them to the default positions,
-        # then use these values to create a data cube for each image
-        #for i in range(num_dir):
-        #    self._create_data_cubes(new_dir + str(i))
-            #print('***********************\n'
-            #      + f"through {i + 1} of {num_dir} directories"
-            #      + '\n***********************')
-
         # good practice once the parallelized portion is complete
         pool.close()
         pool.join()
@@ -144,17 +136,17 @@ class KlipCreate():
         np.random.seed()
         # generate uncertainties in pointing the detector and the dither cycle
         if pnt_err:
-            self.point_err_ax = np.random.normal(0, .25, 4)
+            self.point_err_ax = np.random.normal(0, .1, (2, 2))
         else:
-            self.point_err_ax = np.zeros(4)
+            self.point_err_ax = np.zeros((2, 2))
         self.dith_err_ax = np.random.normal(0, .004, (2,len(self.positions),2))
         # shape is 2 cases (ref/sci), # of positions, 2 axes (x/y)
 
         # separate the randomized positions into reference and science sets
         self.draws_ref = (self.positions
-                          + self.point_err_ax[:2] + self.dith_err_ax[0])
+                          + self.point_err_ax[0] + self.dith_err_ax[0])
         self.draws_sci = (self.positions
-                          + self.point_err_ax[2:] + self.dith_err_ax[1])
+                          + self.point_err_ax[1] + self.dith_err_ax[1])
 
     def _create_data_cubes(self, new_dir, pnt_err, oversample):
         # PRINT ATTRIBUTES SO YOU CAN CHECK
@@ -183,29 +175,20 @@ class KlipCreate():
             ns.filter = 'F110W'
             ns.image_mask = 'IFU'
 
-            # apply offset due to uncertainty in overall pointing from
+            # apply offset due to uncertainty in overall pointing of observatory
             if i < len(self.positions):
-                x_off = pos[0] + self.point_err_ax[0]
-                y_off = pos[1] + self.point_err_ax[1]
+                x_off, y_off = pos + self.point_err_ax[0]
             else:
-                x_off = pos[0] + self.point_err_ax[2]
-                y_off = pos[1] + self.point_err_ax[3]
+                x_off, y_off = pos + self.point_err_ax[1]
 
-            # apply dither-specific offset for small, 9-point cycle pointings
-            # i personally add the (0, 0) point to bring the total to 10,
-            # so i'll have 2 x 10 data cubes
+            # apply offset due to uncertainty in pointing during dither cycle
             if i > 0 and i < len(self.positions):
                 x_off += self.dith_err_ax[0][i][0]
                 y_off += self.dith_err_ax[0][i][1]
-                #x_off += dith_err_ax[0][0][0] # apply same dither error to each step,
-                #y_off += dith_err_ax[0][0][1] # like before (for testing purposes)
 
             elif i > len(self.positions):
                 x_off += self.dith_err_ax[1][i - len(self.positions)][0]
                 y_off += self.dith_err_ax[1][i - len(self.positions)][1]
-                #x_off += dith_err_ax[1][0][0] # apply same dither error to each step,
-                #y_off += dith_err_ax[1][0][1] # like before (for testing purposes)
-
 
             # create data cube
             ns.options['source_offset_x'] = x_off
@@ -224,8 +207,8 @@ class KlipCreate():
                          + (str(i) if is_ref else str(i - len(self.positions)))
                          + '.fits')
 
-            print(f"{len(self.positions) - 1 - i % len(self.positions)} to go in "
-                  f"{'reference' if i < len(self.positions) else 'science'}"
+            print(f"{len(self.positions) - 1 - i % len(self.positions)} left "
+                  f"in {'reference' if i < len(self.positions) else 'science'}"
                   f", {time.time() - start:.3f} sec",
                   flush=True)
 
