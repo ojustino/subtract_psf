@@ -90,7 +90,6 @@ class KlipCreate():
         slices = int((self.hi_wv - self.lo_wv) / slice_width)
         if temp_slices:
             slices = temp_slices # orig. 6; IDEALLY REMOVE THIS LINE
-        # T0-D0: ELIMINATE 100 WAVELENGTH LIMIT IN CALC_DATA* IN WEBBPSF!
         self.wvlnths = np.linspace(self.lo_wv, self.hi_wv,
                                    num=slices, endpoint=True)
 

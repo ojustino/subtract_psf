@@ -1216,6 +1216,8 @@ class SubtractImages():
 
         plt.show()
 
+        return tgt_image.sum(), np.abs(tgt_image - proj).sum()
+
     def plot_contrasts(self, target_image=0, wv_slices=None, times_sigma=5,
                        show_radial=True, return_plot=False, dir_name=''):
         '''
@@ -1382,7 +1384,7 @@ class KlipRetrieve(AlignImages, SubtractImages):
         (default), 'empirical1', and 'empirical2'.
     '''
 
-    def __init__(self, dir_name, align_style='theoretical',
+    def __init__(self, dir_name, align_style='empirical2',
                  remove_offsets=True):
         super().__init__()
 
