@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import mkl
 import multiprocessing as mp
 import numpy as np
@@ -80,7 +80,7 @@ class KlipCreate():
         # (taken from grating/disperser 395H and filter 290LP)
         # CHANGE TO INCORPORATE ASTROPY UNITS, MAKE CORRESPONDING CHANGE IN _count_photons IN klip_retrieve.py?
         self.lo_wv = 2.87e-6
-        self.hi_wv = 5.14e-6
+        self.hi_wv = 5.27e-6
         self.resolve_pwr = 2700
 
         # get array of target wavelengths
