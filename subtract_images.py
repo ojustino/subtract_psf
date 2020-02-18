@@ -726,7 +726,7 @@ class SubtractImages():
             inj_cubes[im].header['PIXCOMPX'] = (star_locs[im][1] + dist_x,
                                                 'brightest pixel, X direction')
             if stdev_case:
-                inj_cubes[im].header['XSIGMA'] = (comp_scale[im], 'companion '
+                inj_cubes[im].header['XSIGMA'] = (comp_scale[0], 'companion '
                                                   'intensity div. by stddev')
             else:
                 for n, ratio in enumerate(comp_scale):
@@ -789,21 +789,23 @@ class SubtractImages():
         return star_fluxes, comp_fluxes
 
     def plot_subtraction(self, target_image=0, wv_slice=0, companion=False,
-                         dir_name='', return_plot=False):
+                         dir_name='', return_plot=False, no_plot=False):
         '''
         Creates a four panel plot to demonstrate effect of subtraction.
-        Also prints pre- and post-subtraction intensity measured in the scene.
+        Also prints (and can return) pre- and post-subtraction intensity
+        measured in the scene.
 
         Requried arguments allow for the user to select which target image
         (from 0 to len(self.positions) - 1) and which wavelength slice (from 0
-        to len(self.stackable_cubes[WHICHEVER].data[1]) - 1) to display
+        to len(self.stackable_cubes[WHICHEVER].data[1]) - 1) to display.
 
         When companion=True, the plots show the effect of our subtraction on
         companion detection. Can you see it?
 
         Optional arguments allow users to return the figure
         (`return_plot=True`) or save it to disk (`dir_name=PATH/TO/DIR`), but
-        not both.
+        not both. Somewhat counterintuitive, but to just get intensities without
+        plotting (to save time), use `no_plot=True`.
 
         The subtraction is done by using the required arguments to index the
         HDUList from returned by self._generate_klip_proj() to get the
@@ -846,6 +848,9 @@ class SubtractImages():
 
         proj_obj = self.klip_proj[target_image]
         proj = proj_obj.data[wv_slice]
+
+        if no_plot:
+            return tgt_image.sum(), np.abs(tgt_image - proj).sum()
 
         wvln_key = [i for i in proj_obj.header
                     if i.startswith('WVLN') or i.startswith('WAVELN')][wv_slice]
