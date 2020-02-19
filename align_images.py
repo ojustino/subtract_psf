@@ -85,26 +85,26 @@ class AlignImages():
         can be shifted without rolling over an edge. The amount of padding to
         add on both axes is user-specified, and padded indices contain NaNs.
         '''
-        print(f"{cube_list[0][1].data.shape} data cube shape at beginning")
+        print(f"{cube_list[0].data.shape} data cube shape at beginning")
 
         # create NaN array with proper dimensions for necessary padding
         pad_x = int(abs(pad_x)); pad_y = int(abs(pad_y))
         for cube in cube_list:
             padded = np.full((len(self.wvlnths),
-                              cube[1].data.shape[1] + pad_y * 2,
-                              cube[1].data.shape[2] + pad_x * 2), np.nan)
+                              cube.data.shape[1] + pad_y * 2,
+                              cube.data.shape[2] + pad_x * 2), np.nan)
             # (6,34,34) post-padding in _shift_dither_pos() for example_images/
 
-            # place this HDUList's ext 1 table inside each wvlth's padded array
+            # place this ImageHDU's data inside each wvlth's padded array
             # (if a pad amount is 0, slicing 0:None includes all indices)
             padded[:,
                    pad_y:-pad_y if pad_y else None,
-                   pad_x:-pad_x if pad_x else None] = cube[1].data
+                   pad_x:-pad_x if pad_x else None] = cube.data
 
-            # replace the original ext 1 table with the new one
-            cube[1].data = padded
+            # replace the original data with this new, padded version
+            cube.data = padded
 
-        print(f"{cube_list[0][1].data.shape} data cube shape at end",
+        print(f"{cube_list[0].data.shape} data cube shape at end",
               end='\n\n')
         return cube_list
 
@@ -126,20 +126,20 @@ class AlignImages():
         # are too small to shift for with the IFU's .1 arcsecond/pix resolution
 
         # Add padding before undoing dithers
-        padded_cubes = self._pad_cube_list(copy.deepcopy(self.data_cubes),
+        padded_cubes = self._pad_cube_list(self._pklcopy(self.data_cubes),
                                            max_dith_x, max_dith_y)
 
         # Undo the dither steps (as much as possible, pixel-wise)\
         # by shifting the data with np.roll
         for i, cube in enumerate(padded_cubes):
-            cube[1].data = np.roll(cube[1].data,
-                                   -dith_shifts[i if i < len(self.positions)
-                                                else i - len(self.positions)][0],
-                                   axis=2)
-            cube[1].data = np.roll(cube[1].data,
-                                   -dith_shifts[i if i < len(self.positions)
-                                                else i - len(self.positions)][1],
-                                   axis=1)
+            cube.data = np.roll(cube.data,
+                                -dith_shifts[i if i < len(self.positions)
+                                             else i - len(self.positions)][0],
+                                axis=2)
+            cube.data = np.roll(cube.data,
+                                -dith_shifts[i if i < len(self.positions)
+                                             else i - len(self.positions)][1],
+                                axis=1)
             # negative movement because you're *undoing* the original shift
             # in that direction. note that axis 0 is the wavelength dimension
             # we're focused on x (2) and y (1) in the PSF
@@ -163,20 +163,20 @@ class AlignImages():
         max_ptg_y = np.abs([ptg_shifts_ref[1], ptg_shifts_sci[1]]).max()
 
         # Add padding before undoing pointing error
-        multipad_cubes = self._pad_cube_list(copy.deepcopy(padded_cubes),
+        multipad_cubes = self._pad_cube_list(self._pklcopy(padded_cubes),
                                              max_ptg_x, max_ptg_y)
 
         # Undo the pointing error (as much as possible, pixel-wise)
         # by shifting the data with np.roll
         for i, cube in enumerate(multipad_cubes):
-            cube[1].data = np.roll(cube[1].data,
-                                   -(ptg_shifts_ref if i < len(self.positions)
-                                     else ptg_shifts_sci)[0],
-                                   axis=2)
-            cube[1].data = np.roll(cube[1].data,
-                                   -(ptg_shifts_ref if i < len(self.positions)
-                                     else ptg_shifts_sci)[1],
-                                   axis=1)
+            cube.data = np.roll(cube.data,
+                                -(ptg_shifts_ref if i < len(self.positions)
+                                  else ptg_shifts_sci)[0],
+                                axis=2)
+            cube.data = np.roll(cube.data,
+                                -(ptg_shifts_ref if i < len(self.positions)
+                                  else ptg_shifts_sci)[1],
+                                axis=1)
             # negative movement because you're *undoing* the original shift
             # in that direction. note that axis 0 is the wavelength dimension
             # we're focused on x (2) and y (1) in the PSF
@@ -200,9 +200,9 @@ class AlignImages():
         average bright pixel location and is in self.plot_shifts().)
         '''
         # collect reference and target images as separate arrays with all slices
-        ref_images = np.array([cube[1].data for cube
+        ref_images = np.array([cube.data for cube
                                in multipad_cubes[:len(self.positions)]])
-        tgt_images = np.array([cube[1].data for cube
+        tgt_images = np.array([cube.data for cube
                                in multipad_cubes[len(self.positions):]])
 
         # for each set, find indices of brightest pixel in each cube's 0th slice
@@ -244,13 +244,13 @@ class AlignImages():
 
             print('commence alignment of ref images with sci images')
             # add padding before shifting (for ALL cubes)
-            stackable_cubes = self._pad_cube_list(copy.deepcopy(multipad_cubes),
+            stackable_cubes = self._pad_cube_list(self._pklcopy(multipad_cubes),
                                                   pix_offset[0], pix_offset[1])
 
             # make the adjustment and align the ref & sci images as best we can
             for cube in stackable_cubes[:len(self.positions)]:
-                cube[1].data = np.roll(cube[1].data, pix_offset[0], axis=2)
-                cube[1].data = np.roll(cube[1].data, pix_offset[1], axis=1)
+                cube.data = np.roll(cube.data, pix_offset[0], axis=2)
+                cube.data = np.roll(cube.data, pix_offset[1], axis=1)
                 # note that axis 0 is the wavelength dimension
                 # we're focused on x (2) and y (1) in the PSF
 
@@ -351,13 +351,13 @@ class AlignImages():
                 return closest_dist
 
             # add padding before shifting (for ALL cubes)
-            stackable_cubes = self._pad_cube_list(copy.deepcopy(multipad_cubes),
+            stackable_cubes = self._pad_cube_list(self._pklcopy(multipad_cubes),
                                                   1, 1)
 
             # make the adjustment and align the ref & sci images as best we can
             for cube in stackable_cubes[:len(self.positions)]:
-                cube[1].data = np.roll(cube[1].data, closest_dist[0], axis=2)
-                cube[1].data = np.roll(cube[1].data, closest_dist[1], axis=1)
+                cube.data = np.roll(cube.data, closest_dist[0], axis=2)
+                cube.data = np.roll(cube.data, closest_dist[1], axis=1)
                 # note that axis 0 is the wavelength dimension
                 # we're focused on x (2) and y (1) in the PSF
 
@@ -385,9 +385,9 @@ class AlignImages():
         NEEDS ITS OWN PLOTTING FUNCTION; STILL THINKING OF BEST WAY TO VISUALIZE. HEAT MAP?
         '''
         # collect reference and target images as separate arrays with all slices
-        ref_images = np.array([cube[1].data for cube
+        ref_images = np.array([cube.data for cube
                                in padded_cubes[:len(self.positions)]])
-        tgt_images = np.array([cube[1].data for cube
+        tgt_images = np.array([cube.data for cube
                                in padded_cubes[len(self.positions):]])
 
         # for each set, find indices of brightest pixel in each cube's 0th slice
@@ -417,14 +417,14 @@ class AlignImages():
         max_off_y, max_off_x = np.abs(all_offsets).max(axis=0)
         print(max_off_y, max_off_x)
         #max_off_y, max_off_x = np.maximum(ref_offsets, tgt_offsets).max(axis=0)
-        stackable_cubes = self._pad_cube_list(copy.deepcopy(padded_cubes),
+        stackable_cubes = self._pad_cube_list(self._pklcopy(padded_cubes),
                                               max_off_y, max_off_x)
 
         # shift other images so their bright pixels align with 0th target img's
         for i, cube in enumerate(stackable_cubes):
             if any(all_offsets[i] != 0): # ...if necessary
-                cube[1].data = np.roll(cube[1].data, all_offsets[i][0], axis=2)
-                cube[1].data = np.roll(cube[1].data, all_offsets[i][1], axis=1)
+                cube.data = np.roll(cube.data, all_offsets[i][0], axis=2)
+                cube.data = np.roll(cube.data, all_offsets[i][1], axis=1)
                 # note that axis 0 is the wavelength dimension
                 # we're focused on x (2) and y (1) in the PSF
 

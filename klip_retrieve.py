@@ -54,17 +54,14 @@ class KlipRetrieve(AlignImages, SubtractImages):
         self.terminal_call = self._get_og_call(dir_name)
         #self.plot_shifts(dir_name)
 
-        # retrieve data cubes, and remove their offsets
+        # retrieve data cubes, then remove their offsets
         self.data_cubes = self._retrieve_data_cubes(dir_name)
-        self.stackable_cubes = self._remove_offsets(align_style)
+        aligned_cubes = self._remove_offsets(align_style)
 
-        # remove self.stackable_cubes' padding so only non-NaN pixels remain...
-        self._get_best_pixels(show_footprints=False)
+        # remove aligned_cubes' padding so only non-NaN pixels remain...
+        self.stackable_cubes = self._get_best_pixels(aligned_cubes, False)
 
-        # then change it from a list of HDULists to one all-encompassing HDUList
-        self._flatten_hdulist()
-
-        # make KLIP projections of target images
+        # make KLIP projections of target images in stackable_cubes
         self.klip_proj = self._generate_klip_proj()
 
         # calc. HDULists of assorted contrast/separation data at all wavelengths
@@ -73,6 +70,16 @@ class KlipRetrieve(AlignImages, SubtractImages):
 
         # create a new set of target images with an injected companion
         self.injected_cubes = self.inject_companion()
+
+    def _pklcopy(self, obj):
+        '''
+        A faster alternative to `copy.deepcopy(obj)` that also remains accurate
+        in some cases where `obj.copy()` doesn't for HDULists.
+
+        See https://stackoverflow.com/a/29385667 for more info -- deepcopy might
+        still be better in some cases.
+        '''
+        return pickle.loads(pickle.dumps(obj, -1))
 
     def _retrieve_data_cubes(self, dir_name):
         '''
@@ -91,10 +98,19 @@ class KlipRetrieve(AlignImages, SubtractImages):
         img_files = sorted([f for f in os.listdir(dir_name)
                             if f.endswith('.fits')])
 
-        data_cubes = []
+        data_cubes = fits.HDUList(fits.ImageHDU())
         for f in img_files:
             with fits.open(dir_name + '/' + f) as hdul:
-                data_cubes.append(copy.deepcopy(hdul))
+                #data_cubes.append(copy.deepcopy(hdul))
+                data_cubes.append(fits.ImageHDU(hdul[1].data, hdul[1].header))
+
+        # name images by their set and observation number
+        data_cubes = data_cubes[1:] # remove PrimaryHDU
+        for i, img in enumerate(data_cubes[:len(data_cubes)//2]):
+            img.name = f"REFERENCE{i}"
+
+        for i, img in enumerate(data_cubes[len(data_cubes)//2:]):
+            img.name = f"TARGET{i}"
 
         return data_cubes
 

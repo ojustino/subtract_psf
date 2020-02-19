@@ -46,27 +46,25 @@ class SubtractImages():
     mentioned above.
     '''
 
-    def _get_best_pixels(self, show_footprints=True):
+    def _get_best_pixels(self, data_cubes, show_footprints=True,
+                         indices_only=False):
         '''
-        Find indices common to all PSFs that don't contain NaNs used for
-        padding.
+        Find the indices in all slices of a given set of data cubes that don't
+        contain the NaNs used for padding in AlignImages().
 
-        (Measured per-pixel. The value at each index represents how many images
-        in which that pixel was non-NaN. A pixel present in all slices should
-        have a value of len(cube[1].data), or the total number of slices in
-        this class' instance's cubes.)
+        Creates a coverage map with the same (pixel) size as the scenes in
+        `data_cubes`, then goes through all slices of all images, counting
+        whether each pixel is non-NaN.
+
+        If `indices_only` is False, the data cubes are then sliced to only
+        include the pixels are non-NaN in every scene. If True, the method
+        returns the actual array of good indices.
         '''
-        coverage_map = np.zeros(self.stackable_cubes[0][1].shape[1:])
+        coverage_map = np.zeros(data_cubes[0].shape[1:])
 
-        for cube in self.stackable_cubes:
-            coverage_map += np.isfinite(cube[1].data[-1])
+        for cube in data_cubes:
+            coverage_map += np.isfinite(cube.data[-1])
             # wavelength slice (last index above) doesn't matter
-
-        if show_footprints:
-            # plot footprints for each slice to compare of non-nan pixels by eye
-            plt.imshow(coverage_map, norm=mpl.colors.LogNorm(),
-                       cmap=plt.cm.magma)
-            plt.show()
 
         # save the coordinates of these never-padded pixels
         # (note the flipped axes from array (y by x) to plot (x by y))
@@ -75,42 +73,25 @@ class SubtractImages():
         maxed_pixels = np.array(present)
         best_pix = [(i.min(), i.max()) for i in maxed_pixels]
 
-        # downsize images to their non-NaN pixels
-        for i, cube in enumerate(self.stackable_cubes):
-            cube[1].data = cube[1].data[:, best_pix[1][0] : best_pix[1][1] + 1,
-                                        best_pix[0][0] : best_pix[0][1] + 1]
+        if indices_only:
+            return best_pix
 
-        print(f"{self.stackable_cubes[0][1].data.shape} "
+        # plot footprints for each slice to compare of non-nan pixels by eye
+        if show_footprints:
+            plt.imshow(coverage_map, norm=mpl.colors.LogNorm(),
+                       cmap=plt.cm.magma)
+            plt.show()
+
+        # slice images down to their non-NaN pixels
+        sliced_cubes = self._pklcopy(data_cubes)
+        for i, cube in enumerate(sliced_cubes):
+            cube.data = cube.data[:, best_pix[1][0] : best_pix[1][1] + 1,
+                                  best_pix[0][0] : best_pix[0][1] + 1]
+
+        print(f"{sliced_cubes[0].data.shape} "
               'data cube shape after removing padding')
 
-        #return best_pix
-
-    def _flatten_hdulist(self):
-        sample_slice = self.stackable_cubes[0][1]
-        # first index of stackable_cubes above shouldn't matter
-
-        # create a new HDUList w/ the same length as self.stackable_cubes AND
-        # the same data shapes as the first index of each stackable_cubes entry
-        flat_hdu = fits.HDUList([cube[1] for cube in self.stackable_cubes])
-
-        # set up some header labels that list wavelength values at each slice
-        wvlnth_labels = [key for key
-                         in list(sample_slice.header.keys())
-                         if key.startswith('WVLN') or key.startswith('WAVELN')]
-
-        # place the labels in their corresponding HDUList entry headers
-        for i, img in enumerate(flat_hdu):
-            if i < len(self.positions):
-                img.name = 'REFERENCE' + str(i)
-            else:
-                img.name = 'TARGET' + str(i % len(self.positions))
-
-            for j, key in enumerate(wvlnth_labels):
-                img.header[key] = (sample_slice.header[key],
-                                   f"wavelength of image slice {j:,}")
-
-        #return flat_hdu
-        self.stackable_cubes = flat_hdu
+        return sliced_cubes
 
     def _count_photons(self,
                        temp_star=6000*u.K, rad_star=1*u.solRad, dist=1.5*u.pc,
@@ -252,7 +233,7 @@ class SubtractImages():
 
         # set up hdulist of klip projections for all slices of all target images
         # (otherwise, has the same HDU structure as stackable_cubes)
-        klip_proj = copy.deepcopy(self.stackable_cubes[len(self.positions):])
+        klip_proj = self._pklcopy(self.stackable_cubes[len(self.positions):])
 
         # carry out klip projections for all slices of every target image
         # and insert them into the HDUList generated above
@@ -303,13 +284,13 @@ class SubtractImages():
 
         # create contrast/separation HDUlists to be filled
         # (will have same headers as stackable_cubes but data will change)
-        pre_prof_hdu = copy.deepcopy(self.stackable_cubes[len(self.positions):])
-        post_prof_hdu = copy.deepcopy(pre_prof_hdu)
-        photon_prof_hdu = copy.deepcopy(pre_prof_hdu)
-        pre_avg_hdu = copy.deepcopy(pre_prof_hdu)
+        pre_prof_hdu = self._pklcopy(self.stackable_cubes[len(self.positions):])
+        post_prof_hdu = self._pklcopy(pre_prof_hdu)
+        photon_prof_hdu = self._pklcopy(pre_prof_hdu)
+        pre_avg_hdu = self._pklcopy(pre_prof_hdu)
 
         # create a dummy hdulist to match poppy's expected format
-        temp_hdu = fits.HDUList([copy.deepcopy(self.data_cubes[0][1])
+        temp_hdu = fits.HDUList([self._pklcopy(self.data_cubes[0])
                                  for _ in range(3)])
 
         # calculate radial profiles at each wavelength, pre & post-subtraction,
@@ -693,7 +674,7 @@ class SubtractImages():
         dist_arc = np.sqrt((dist_x*pix_len)**2 + (dist_y*pix_len)**2)
 
         # create HDUList that will the hold new, injected target images
-        inj_cubes = copy.deepcopy(self.stackable_cubes[len(tgt_images):])
+        inj_cubes = self._pklcopy(self.stackable_cubes[len(tgt_images):])
 
         for im in range(tgt_images.shape[0]):
             for sl in range(tgt_images.shape[1]):
@@ -748,13 +729,13 @@ class SubtractImages():
         Ingests finely sampled spectra for a star/companion pair, bins them
         down, then adjusts the brightness of the companion in
         `self.injected_cubes` to better simulate how a real, polychromatic
-        observation of a companion might look.
+        observation of a companion at a given arcsecond separation might look.
 
         Arguments `comp_spectrum` and `star_spectrum` should either be astropy
         Table objects *or* a string paths to spectra files that can be read in
         as Tables. If you go the string route, you must also provide the proper
         format as argument `comp_format` or `star_format`. (See documentation
-        for astropy's  Table.read() for more information on acceptable formats.)
+        for astropy's Table.read() for more information on acceptable formats.)
 
         Whichever route you take, the tables/files **must**:
             - have two columns of data. The first column should contain
@@ -782,7 +763,7 @@ class SubtractImages():
         # present in both the companion=False/True cases of plot_subtraction()
 
         # inject a companion, scaled per slice
-        self.inject_companion(separation=separation, comp_scale=slice_scales)#
+        self.inject_companion(separation=separation, comp_scale=slice_scales)
         # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
         print([f"{cont:.0e}" for cont in slice_scales])
 
