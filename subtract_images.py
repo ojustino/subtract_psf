@@ -220,11 +220,11 @@ class SubtractImages():
                                        '********', sep='\n')
 
         # collect all images in one 4D array.
-        # dimensions are: number of ref & tgt images,
+        # dimensions are: number of ref & tgt data cubes,
         # number of wavelength slices, and the 2D shape of a post-padded image
         all_cubes = np.array([cube.data for cube in self.stackable_cubes])
 
-        # separate the reference and target images
+        # separate the reference and target data cubes
         refs_all = all_cubes[:len(self.positions)]
         tgts_all = all_cubes[len(self.positions):]
 
@@ -518,92 +518,27 @@ class SubtractImages():
 
         return bin_fluxes
 
-    def inject_companion(self, comp_scale=5, separation=None,
-                         #star_scale=None
-                        ):
+    def _choose_random_sep(self, target_images):
         '''
-        Create a new HDUList, `self.injected_cubes`, where every slice of each
-        target image from `self.stackable_cubes` has been injected with a
-        synthetic, randomly placed companion. (The injection is just a
-        scaled-down and shifted copy of the star's PSF.)
+        Called from `self._inject_companion()` if the user didn't specify a
+        companion separation. Calculates separations that will safely remain
+        in-frame for all pointings, then randomly chooses Y and X pixel
+        distances from the set that remains.
 
-        Argument `comp_scale` controls the brightness of the companion. Its
-        behavior varies depending on its type:
-            - If `comp_scale` is an int/float, the brightness is X times the
-            standard deviation of pixel intensity at the specified radial
-            separation from the star in the pre-subtraction image. (Radial
-            profile information comes from `self.pre_prof_hdu`.)
-            - If `comp_scale` is an array/list, the brightness of the companion
-            in each slice of an image is the star's brightness times the
-            corresponding scaling value. The array/list's length should match
-            the number or slices (wavelengths) per image, and entries should be
-            flux_companion / flux_star for each slice.
-
-        Argument `separation` controls the separation of the companion from
-        the star in arcseconds. (Note that the value is rounded to the
-        nearest tenth.)
-            - If `separation` is None (default), the method will randomly
-            generate a new separation and resulting companion location.
-            - If `separation` is an int/float, it must not be too close to the
-            star or the edge of the frame. For acceptable values, the
-            companion's location is still chosen randomly, but its distance
-            from the star must match what the user specified.
-
-        The user can then subtract corresponding slices of `self.klip_proj` from
-        the HDUList produced by this method and determine whether the generated
-        companion is recoverable.
-
-        perhaps need to make pixel size a class attribute in klip_create.py? then multiply each slice of each image by the appropriate scale
+        Returns those pixel distances along with the resulting distance
+        magnitude in arcseconds.
         '''
-        print_ast = lambda text: print('\n********',
-                                           text,
-                                           '********', sep='\n')
-
-        pix_len = .1 # arcseconds
-        # this should be a shape (2,) class attribute, so then you'd need pix_len_x/y
+        pix_len = .1
 
         # limit to pixels that aren't within N pixels of star or the edge
         edge_gap = 2; st_gap = 1 #pixels
         min_sep = np.round(np.sqrt(2 * ((st_gap + 1) * pix_len)**2), 1)
 
-        # for a user-provided separation, ensure it's far enough from the star
-        if separation is not None:
-            if np.round(separation,1) < min_sep:
-                raise ValueError('Chosen separation is too close to star; '
-                                 f"must be at least {min_sep:.1f} "
-                                 'arcseconds away.')
-            # convert separation to pixels
-            pix_sep = np.round(separation / pix_len)
-        # if separation is None, a random position will be chosen
-        else:
-            pix_sep = None
-
-        # if comp_scale is a float/int, extend that value into an array
-        if isinstance(comp_scale, float) or isinstance(comp_scale, int):
-            comp_scale = np.full(len(self.wvlnths), comp_scale)
-            stdev_case = True # brightness will be based on radial profile
-        else:
-            stdev_case = False
-
-        msg = (f"(location-specific) {comp_scale[0]:.0f}-sigma " if stdev_case
-               else 'spectrally defined ')
-        print_ast('injecting companion with ' + msg + 'intensity.')
-
-        # if comp_scale was a list/array, make sure it's of proper length
-        if len(comp_scale) != len(self.wvlnths):
-            raise ValueError('`comp_scale` must either be a single number or a '
-                             'list/array of numbers with the same length as '
-                             'the number of image slices in each data cube '
-                             '(len(self.wvlnths)).')
-
-        # collect all slices of all target images in one array
-        tgt_images = np.array([cube.data for cube
-                               in self.stackable_cubes[len(self.positions):]])
-
-        # get location of star in each image (all slices of an image should
-        # have the same star location, so len(star_locs) == # of images)
-        star_locs = np.array([[i.header['PIXSTARY'], i.header['PIXSTARX']]
-                              for i in self.pre_prof_hdu]) # y, x in each slice
+        # find indices of brightest pixel in each cube's 0th slice
+        # (all slices of a given image cube should have the same bright spot)
+        star_locs = np.array([np.unravel_index(np.argmax(tgt_images[i][0]),
+                                               tgt_images[i][0].shape)[::-1]
+                              for i in range(tgt_images.shape[0])])
 
         # in each image, get indices of possible pixels in each direction,
         # excluding ones too close to the edge
@@ -622,17 +557,11 @@ class SubtractImages():
                   else np.abs(st_x - poss_x[0])
                   for st_x in star_locs[:,0]]
 
-        # for a user-provided separation, ensure it's far enough from the edge
+        # next, exclude pixels too close to the star
         max_safe_y = int(np.min(max_ys)); max_safe_x = int(np.min(max_xs))
         print('max_safes', max_safe_y, max_safe_x)
         max_safe_sep = np.round(np.sqrt(max_safe_x**2 + max_safe_y**2))
 
-        if pix_sep is not None and max_safe_sep < pix_sep:
-            raise ValueError('Chosen separation is too close to edge. For '
-                             'this data cube, try a separation below '
-                             f"{max_safe_sep * pix_len:.1f} arcseconds.")
-
-        # next, exclude pixels too close to the star
         below_max_y = np.arange(-max_safe_y, max_safe_y + 1).astype(int)
         below_max_x = np.arange(-max_safe_x, max_safe_x + 1).astype(int)
 
@@ -645,97 +574,38 @@ class SubtractImages():
         print(poss_dists_x)
         print(poss_dists_y)
 
-        # companion pixel selection procedure varies by case
-        if pix_sep is not None: # in user-selected separation case...
-            k = 0
-            while True:
-                # ...try a random combination of two safe pixels
-                dist_y = np.random.choice(poss_dists_y)
-                dist_x = np.random.choice(poss_dists_x)
-                dist = np.sqrt(dist_y**2 + dist_x**2)
-                # if it gives the desired separation (dist), that's the pair
-                if np.round(dist) == pix_sep:
-                    print(f"{k} iterations")
-                    break
-                if k > 1e4:
-                    raise RuntimeError("Can't find a pixel combination to "
-                                       'satisfy the requested separation. '
-                                       'Try another?')
-                k += 1
-        else: # in random separation case...
-            # ...randomly choose two safe pixels without need for a loop
-            dist_y = np.random.choice(poss_dists_y)
-            dist_x = np.random.choice(poss_dists_x)
-            dist = np.sqrt(dist_y**2 + dist_x**2)
-
+        # choose companion x/y distances based on remaining, safe pixels
+        dist_y = np.random.choice(poss_dists_y)
+        dist_x = np.random.choice(poss_dists_x)
+        dist_arc = np.sqrt((dist_x*pix_len)**2 + (dist_y*pix_len)**2)
         print(max_safe_sep, dist_y, dist_x)
 
-        # get another separation metric, this time in arcseconds
-        dist_arc = np.sqrt((dist_x*pix_len)**2 + (dist_y*pix_len)**2)
+        return dist_y, dist_x, dist_arc
 
-        # create HDUList that will the hold new, injected target images
-        inj_cubes = self._pklcopy(self.stackable_cubes[len(tgt_images):])
-
-        for im in range(tgt_images.shape[0]):
-            for sl in range(tgt_images.shape[1]):
-                if stdev_case:
-                    # get pre-subtraction contrasts & separations for this slice
-                    arc_seps = self.pre_prof_hdu[im].data[sl][0]
-                    contrasts = self.pre_prof_hdu[im].data[sl][1]
-
-                    # get companion/star contrast at given radial separation
-                    rad_dist_ind = np.argmin(np.abs(arc_seps - dist_arc))
-                    comp_contrast = contrasts[rad_dist_ind] * comp_scale[sl]
-                else:
-                    comp_contrast = comp_scale[sl]
-
-                # simulate the addition of a companion to the frame by copying
-                # the image and multiplying it by the companion's contrast
-                tgt_slice = tgt_images[im][sl]
-                comp_slice = tgt_slice.copy() * comp_contrast
-
-                # roll injected image's bright pixel to companion location
-                comp_slice = np.roll(comp_slice, dist_x, axis=1)
-                comp_slice = np.roll(comp_slice, dist_y, axis=0)
-
-                # add both images together and complete the simulated injection
-                inj_cubes[im].data[sl] = tgt_slice + comp_slice
-
-            # add companion's location info and flux/contrast info to header
-            inj_cubes[im].header['PIXCOMPY'] = (star_locs[im][0] + dist_y,
-                                                'brightest pixel, Y direction')
-            inj_cubes[im].header['PIXCOMPX'] = (star_locs[im][1] + dist_x,
-                                                'brightest pixel, X direction')
-            if stdev_case:
-                inj_cubes[im].header['XSIGMA'] = (comp_scale[0], 'companion '
-                                                  'intensity div. by stddev')
-            else:
-                for n, ratio in enumerate(comp_scale):
-                    keyw = 'CONT' + f"{n:04d}"
-                    inj_cubes[im].header[keyw] = (comp_scale[n], "slice #'s "
-                                                  'companion/star flux ratio')
-
-        # if an injection has already occurred, replace it with this new one
-        if hasattr(self, 'injected_cubes'):
-            self.injected_cubes = inj_cubes
-            print_ast('new, injected target images in `self.injected_cubes`.')
-        else:
-            return inj_cubes
-
-    def scale_from_spectra(self, star_spectrum, comp_spectrum,
-                           star_format=None, comp_format=None,
-                           separation=None):
+    def inject_companion(self, comp_scale=None, return_fluxes=False,
+                         star_spectrum=None, comp_spectrum=None,
+                         star_format=None, comp_format=None,
+                         separation=None, position_angle=np.pi/8):
         '''
-        Ingests finely sampled spectra for a star/companion pair, bins them
-        down, then adjusts the brightness of the companion in
-        `self.injected_cubes` to better simulate how a real, polychromatic
-        observation of a companion at a given arcsecond separation might look.
+        ****I think pre_inject should be an argument of KlipRetrieve, *then,* if True,
+        include all of these other arguments****
 
-        Arguments `comp_spectrum` and `star_spectrum` should either be astropy
-        Table objects *or* a string paths to spectra files that can be read in
-        as Tables. If you go the string route, you must also provide the proper
-        format as argument `comp_format` or `star_format`. (See documentation
-        for astropy's Table.read() for more information on acceptable formats.)
+        Ingests finely sampled spectra for a star/companion pair, bins them
+        down, then adjusts the brightness of the companion to better simulate
+        how a real, polychromatic observation of a companion at a given
+        arcsecond separation might look.
+
+        There are two options for scaling. First, argument `comp_scale` is an
+        int/float and will make the companion's flux X times the standard
+        deviation of pixel intensity at the specified radial separation from
+        the star in the pre-subtraction image. (Radial profile information comes
+        from `self.pre_prof_hdu`.)
+
+        Second, arguments `comp_spectrum` and `star_spectrum` should either be
+        astropy Table objects *or* string paths to spectra files that can be
+        read in as Tables. If you go the string route, you must also provide the
+        proper format as argument `comp_format` or `star_format`. (See
+        astropy's Table.read() documentation for more on acceptable formats.)
 
         Whichever route you take, the tables/files **must**:
             - have two columns of data. The first column should contain
@@ -743,16 +613,115 @@ class SubtractImages():
             - have wavelength units of microns or something equivalent.
             - have flux density units of erg / s / cm**2 / Hz, erg / s / cm**3,
             mJy, or something equivalent.
+
+        To get back the binned-down spectra, set argument `return_fluxes` to
+        True.
+
+        Argument `separation` is a float that represents the separation of the
+        companion from the star in arcseconds. (Note that the value is rounded
+        to the nearest tenth.) If it is `None`, the method will randomly choose
+        a companion location that's safely in the image's frame.
+
+        Finally, argument `position_angle` is the companion's position angle in
+        radians, relative to the star. It only has an effect if you've specified
+        a separation.
+
+        CHANGE plot_subtraction (and perhaps plot_contrast) TO REFLECT NEW PIXCOMPX/Y
+        WRITE a new class to pre-inject data cubes
         '''
-        # validate both spectra if str, open file. else, assumes Table
-        star_spec = self._check_spectrum(star_spectrum, star_format)
-        comp_spec = self._check_spectrum(comp_spectrum, comp_format)
+        # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
 
-        star_fluxes = self._get_bin_fluxes(star_spec)
-        comp_fluxes = self._get_bin_fluxes(comp_spec)
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n')
 
-        slice_scales = (comp_fluxes / star_fluxes).value
-        # in the future, might need to scale BOTH the star and the companion
+        # I. Check on how the companion will be scaled
+        if star_spectrum is not None and comp_spectrum is not None:
+            if comp_scale is None:
+                # validate both spectra. if str, open file. else, assumes Table
+                star_spec = self._check_spectrum(star_spectrum, star_format)
+                comp_spec = self._check_spectrum(comp_spectrum, comp_format)
+                got_spectra = True
+            else:
+                raise ValueError('You must either provide `comp_scale` OR a '
+                                 '`star_spectrum` and a `comp_spectrum`. All '
+                                 'three were provided.')
+        elif comp_scale is not None:
+            # continue on with comp_scale
+            got_spectra = False
+        else:
+            raise ValueError('You must either provide `comp_scale` OR a '
+                             '`star_spectrum` and a `comp_spectrum`.')
+
+        # determine which set of data cubes' target images to inject
+        cube_list = self.data_cubes if self.pre_inject else self.stackable_cubes
+        cube_list = self._pklcopy(cube_list)[len(self.positions):]
+
+        # collect all cube data in one array
+        tgt_imgs = np.array([cube.data for cube in cube_list])
+
+        msg1 = ('spectrally defined ' if got_spectra
+                else f"(location-specific) {comp_scale:.0f}-sigma ")
+        msg2 = ', before ' if self.pre_inject else ', after '
+        print_ast('injecting companion with ' + msg1 + 'intensity'
+                  + msg2 + 'alignment.')
+
+        # II. Translate the companion images
+        print_ast('shifting companion...') # better print message
+        if separation is None:
+            # randomly generate the companion's x/y separation
+            s_y, s_x, separation = self._choose_random_sep(tgt_imgs)
+        else:
+            pix_len = .1
+            pix_sep = np.round(separation / pix_len)
+            theta = position_angle
+
+            # trigonometrically convert separation magnitude to x/y separations
+            s_y = -np.round(pix_sep * np.sin(theta)).astype(int)
+            # ("up" in y is + on a graph but negative in an array's 0th dim.)
+            s_x = np.round(pix_sep * np.cos(theta)).astype(int)
+
+        # shift a copy of the star's PSF to the specified companion position
+        # (pad doesn't accept negatives, so we must add zeros/slice creatively)
+        cmp_imgs = np.pad(tgt_imgs, mode='constant', pad_width=
+                          ((0,0), (0,0),
+                           (s_y if s_y > 0 else 0, -s_y if s_y < 0 else 0),
+                           (s_x if s_x > 0 else 0, -s_x if s_x < 0 else 0))
+                         )[:, :,
+                           -s_y if s_y < 0 else 0: -s_y if s_y > 0 else None,
+                           -s_x if s_x < 0 else 0: -s_x if s_x > 0 else None]
+
+        # warn that the companion might be off-frame if most flux is gone
+        if (cmp_imgs.sum(axis=(2,3)) < .2).sum() != 0:
+            warnings.warn('The companion may be off-frame in some slices. '
+                          'Try reducing `separation` if this is undesirable.')
+
+        # III. Scale the companion images
+        if got_spectra:
+            # get binned fluxes based on spectra and take their ratio
+            star_fluxes = self._get_bin_fluxes(star_spec)
+            comp_fluxes = self._get_bin_fluxes(comp_spec)
+            slices_scaled_1x = (comp_fluxes / star_fluxes).value
+
+            # extend the contrast array to repeat once per data cube
+            slices_scaled = np.tile(slices_scaled_1x, (tgt_imgs.shape[0], 1))
+            # (tgt_imgs.shape[0] x tgt_imgs.shape[1]), or (n_cubes x n_slices)
+        else:
+            # get pre-subtraction separation & flux std. dev data from all cubes
+            pre_prof_data = np.array([cb.data for cb in self.pre_prof_hdu])
+            arc_seps = pre_prof_data[:,:,0]
+            flux_stds = pre_prof_data[:,:,1]
+
+            # in all slices, get flux std. dev at given arcsecond separation
+            rad_dist_inds = np.argmin(np.abs(arc_seps - separation), axis=2)
+            slice_stds = flux_stds[np.arange(arc_seps.shape[0])[:,np.newaxis],
+                                   np.arange(arc_seps.shape[1]),
+                                   rad_dist_inds]
+
+            # scale to turn those into `comp_scale`-sigma fluxes
+            slices_scaled = slice_stds * comp_scale
+
+        # NB: in the future, might need to scale BOTH the star and the companion
         # (that way you can see absorption features in the star and you don't
         #  mistake wavelengths where the star gets fainter as emission features
         #  for the companion).
@@ -762,12 +731,46 @@ class SubtractImages():
         # stellar spectrum once that's implemented so the same behavior is
         # present in both the companion=False/True cases of plot_subtraction()
 
-        # inject a companion, scaled per slice
-        self.inject_companion(separation=separation, comp_scale=slice_scales)
-        # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
-        print([f"{cont:.0e}" for cont in slice_scales])
+        # IV. Build a new HDUList with the injected images
+        # in each cube, multiply each wavelength slice by its respective scaling
+        # (add new axes to slices_scaled so dims work for array broadcasting)
+        cmp_imgs *= slices_scaled[:, :, np.newaxis, np.newaxis]
+        #cmp_imgs *= slices_scaled.reshape(slices_scaled.shape + (1,1))]
 
-        return star_fluxes, comp_fluxes
+        # simulate the injection by summing the original and companion cubes
+        inj_imgs = tgt_imgs + cmp_imgs
+
+        # create the HDUList that will the hold new, injected target images
+        inj_cubes = self._pklcopy(self.stackable_cubes[len(tgt_imgs):])
+
+        # Copy these injected images and associated info into the new data cube
+        for i, cube in enumerate(inj_cubes):
+            cube.data = inj_imgs[i]
+
+            cube.header['PIXCOMPY'] = (s_y, "this + PIXSTARY is companion's Y "
+                                       'pixel location')
+            cube.header['PIXCOMPX'] = (s_x, "this + PIXSTARX is companion's X "
+                                       'pixel location')
+
+            if got_spectra:
+                for n, ratio in enumerate(slices_scaled_1x):
+                    keyw = 'CONT' + f"{n:04d}"
+                    cube.header[keyw] = (ratio, f"slice {n:}'s companion to "
+                                         'star flux ratio')
+            else:
+                cube.header['XSIGMA'] = (comp_scale, 'comp. flux / stddev of '
+                                         'scene flux at separation')
+
+        # if an injection has already occurred, replace it with this new one
+        if hasattr(self, 'injected_cubes'):
+            self.injected_cubes = inj_cubes
+            print_ast('new, injected target images in `self.injected_cubes`.')
+            try:
+                return star_fluxes, comp_fluxes
+            except NameError:
+                pass
+        else:
+            return inj_cubes
 
     def plot_subtraction(self, target_image=0, wv_slice=0, companion=False,
                          dir_name='', return_plot=False, no_plot=False):
