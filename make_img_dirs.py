@@ -5,6 +5,7 @@ import os
 import pickle
 import sys
 
+from astropy.io import fits
 from klip_create import KlipCreate
 
 # toy examples
@@ -87,7 +88,7 @@ KlipCreate(args.base_name, num_dir=args.iterations,
            dithers=dithers, pointing_error=args.pnt_err,
            oversample=args.oversample, temp_slices=args.temp_slices)
 
-# For future reference, save a file with the call made to terminal
+# For future reference, save a file containing the call made to terminal
 def parent_dir(base_path):
     return os.path.realpath(os.path.join(base_path, os.pardir)) + '/'
 
@@ -108,6 +109,59 @@ for dir in new_dirs:
     with open(parent_dir(args.base_name) + dir
               + '/original_call.pkl', 'wb') as file:
         pickle.dump(orig_call, file)
+
+# Finally, remove extraneous information from the data cubes' FITS headers
+def downsize_fits_headers(dir_name):
+    '''
+    WebbPSF's calc_datacube produces headers contain a 30 line readout for each
+    slice in each extension of the output HDUList. For a 2 extension HDUList
+    with 3,000 slice data cubes, that's ~200,000 lines. This information isn't
+    needed for our purposes and demonstrably slows the loading process in DS9
+    (and potentially KlipRetrieve), so we seek to eliminate it.
+
+    We take advantage of its predictable length, key ('HISTORY') and position
+    in the list of headers (last) to slice it out in each HDUList extension and
+    save the downsized result.
+    '''
+    HISTORY_OUTPUT_LEN = 30
+    new_dir_name = dir_name + ('/' if not dir_name.endswith('/') else '')
+
+    # find all FITS files in the directory
+    files = sorted([f for f in os.listdir(new_dir_name)
+                if f.endswith('.fits')])
+
+    # change each FITS file's headers, one by one
+    print(f"*****\nin {new_dir_name}")
+    for fl in files:
+        print(f"editing {fl}")
+        with fits.open(new_dir_name + fl, mode='update') as hdul:
+            # count number of slices per cube, minus one
+            # (keeps one slice's worth of info to summarize the rest)
+            slices = hdul[0].data.shape[0] - 1
+
+            # downsize each HDUList extension's data cubes
+            for ext in hdul:
+                # check whether a downsize is actually needed
+                if len(ext.header['HISTORY']) <= HISTORY_OUTPUT_LEN:
+                    print(f"{ext.name} is already short!")
+                    continue
+                else:
+                    print(f"shortening {ext.name}...")
+
+                # 'HISTORY' entries come last, so slice until first one ends
+                ext.header = ext.header[:-(HISTORY_OUTPUT_LEN * slices)]
+
+                # add context for the slice's info that remains
+                ext.header['HISTORY'] = ('(above process is repeated '
+                                         'for each cube slice)')
+
+            # write the changes back to the original file
+            hdul.flush()
+
+generated_dirs = [o.name for o in os.scandir()
+                  if o.name.startswith(args.base_name) and o.is_dir()]
+for dir_name in generated_dirs:
+    downsize_fits_headers(dir_name)
 
 # not currently needed
 #def guarantee_naming(base_name):
