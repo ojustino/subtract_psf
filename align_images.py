@@ -1,13 +1,13 @@
-import copy
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import warnings
 
 
-class AlignImages():
+class AlignImages:
     '''
-    Helper class for KlipCreate().
+    This class is meant to be inherited by a KlipRetrieve() or PreInjectImages()
+    class instance, not used individually.
 
     Takes in data cubes from a directory of images and brings the bright points
     of the reference and target images as close to true alignment as possible.
@@ -64,14 +64,14 @@ class AlignImages():
 
         # or remove pointing error, then....
         else:
-            self.multipad_cubes = self._shift_overall_ptg(self.padded_cubes)
+            multipad_cubes = self._shift_overall_ptg(padded_cubes)
             if align_style == 'theoretical': # (old)
                 # ...calculate star's position and align
-                stackable_cubes = self._align_brights_old(self.multipad_cubes)
+                stackable_cubes = self._align_brights_old(multipad_cubes)
             elif align_style == 'empirical1': # (newer)
                 # ...align based on mean brightest pixel in each set of images
                 # (even if particular slices are slightly offset)
-                stackable_cubes = self._align_brights_new(self.multipad_cubes)
+                stackable_cubes = self._align_brights_new(multipad_cubes)
             else:
                 raise ValueError("align_style must equal 'theoretical', "
                                  "'empirical1', or 'empirical2'.")
@@ -120,8 +120,7 @@ class AlignImages():
         # duplicate shifts -- one set for ref images, repeat for sci images
         dith_shifts = np.tile(dith_shifts, (2,1))
 
-        max_dith_x = dith_shifts[:,0].max()
-        max_dith_y = dith_shifts[:,1].max()
+        max_dith_x, max_dith_y = np.abs(dith_shifts).max(axis=0)
 
         # shifts due to dither cycle's pointing uncertainty (stddev .004 arcsec)
         # are too small to shift for with the IFU's .1 arcsecond/pix resolution
