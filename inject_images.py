@@ -160,7 +160,7 @@ class InjectCompanion:
     def inject_companion(self, cube_list, comp_scale=None, return_fluxes=False,
                          star_spectrum=None, comp_spectrum=None,
                          star_format=None, comp_format=None,
-                         separation=None, position_angle=np.pi/8):
+                         separation=None, position_angle=0, verbose=True):
         '''
         There are two options for scaling. First, argument `comp_scale` is an
         int/float and will make the companion's flux X times the standard
@@ -185,6 +185,23 @@ class InjectCompanion:
         The method will then return, in order, the HDUList of injected data
         cubes, the star's binned spectra, and the companion's binned spectra.
 
+        Parameters
+        -----------
+        cube_list : ndarray
+            data cubes to inject companion into
+        separation : float
+            Companion separation, in arcsec. Note, the value is rounded to the
+            nearest 1/10th pixel, i.e. to an integer pixel separation in the NIRSpec IFU.
+        position_angle : float
+            Position angle, in degrees east of north (standard astronomical convention).
+        return_fluxes : bool
+            return fluxes
+        star_spectrum, comp_spectrum: filenames OR astropy.table objects
+            stellar and companion spectra
+        star_format, comp_format : string
+            table format information to be passed to astropy.table.read
+
+
         Argument `separation` is a float that represents the separation of the
         companion from the star in arcseconds. (Note that the value is rounded
         to the nearest tenth.) If it is `None`, the method will randomly choose
@@ -200,9 +217,10 @@ class InjectCompanion:
         '''
         # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
 
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n')
+        def print_ast(text):
+            if verbose: print('\n********',
+                              text,
+                              '********', sep='\n')
 
         # find which child of this class is calling the method
         _is_klip_retrieve = 'KlipRetrieve' in repr(self)
@@ -251,12 +269,12 @@ class InjectCompanion:
         else:
             pix_len = .1
             pix_sep = np.round(separation / pix_len)
-            theta = position_angle
+            theta = np.deg2rad(position_angle)
 
             # trigonometrically convert separation magnitude to x/y separations
-            s_y = -np.round(pix_sep * np.sin(theta)).astype(int)
-            # ("up" in y is + on a graph but negative in an array's 0th dim.)
-            s_x = np.round(pix_sep * np.cos(theta)).astype(int)
+            # use astronomical convention where PA=0 is north / up
+            s_y = np.round(pix_sep * np.cos(theta)).astype(int)
+            s_x = np.round(pix_sep * -np.sin(theta)).astype(int)
 
         # shift a copy of the star's PSF to the specified companion position
         # (pad doesn't accept negatives, so we must add zeros/slice creatively)

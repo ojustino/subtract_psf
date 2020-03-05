@@ -551,9 +551,11 @@ class SubtractImages(InjectCompanion):
         # panel 2 (klip projection)
         curr_ax = axs[0, 1]
 
+        cmap =  plt.cm.magma
+        cmap.set_bad(cmap(0))
         curr_ax.plot(star_pix_x, star_pix_y,
                      marker='+', color='#1d1160', markersize=4**2, mew=2)
-        panel = curr_ax.imshow(proj, norm=normed, cmap=plt.cm.magma)
+        panel = curr_ax.imshow(proj, norm=normed, cmap=cmap)
 
         cbar = fig.colorbar(panel, ax=curr_ax)
         cbar.ax.tick_params(labelsize=16)
@@ -739,3 +741,5 @@ class SubtractImages(InjectCompanion):
                         + '_contrast_curves.png', dpi=300)
 
         plt.show()
+
+        return post_prof
