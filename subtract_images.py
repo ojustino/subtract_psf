@@ -452,7 +452,7 @@ class SubtractImages(InjectCompanion):
         return pre_prof_hdu, post_prof_hdu, photon_prof_hdu, pre_avg_hdu
 
     def plot_subtraction(self, target_image=0, wv_slice=0, companion=False,
-                         dir_name='', return_plot=False, no_plot=False):
+                         dir_name='', return_plot=False, sub_vmax=5e-4, no_plot=False):
         '''
         Creates a four panel plot to demonstrate effect of subtraction.
         Also prints (and can return) pre- and post-subtraction intensity
@@ -560,7 +560,7 @@ class SubtractImages(InjectCompanion):
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
-        curr_ax.set_title('klipped target', size=22)
+        curr_ax.set_title('Ref. PSF from KLIP', size=22)
 
         # panel 3 (target image again, different scaling)
         curr_ax = axs[1, 0]
@@ -572,9 +572,9 @@ class SubtractImages(InjectCompanion):
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
         else:
-            normed = ImageNormalize(vmin=-1e-4, vmax=5e-4)
+            normed = ImageNormalize(vmin=-sub_vmax, vmax=sub_vmax)
 
-        panel = curr_ax.imshow(tgt_image, norm=normed, cmap=plt.cm.magma)
+        panel = curr_ax.imshow(tgt_image, norm=normed, cmap=plt.cm.RdBu_r)
 
         cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
@@ -590,14 +590,14 @@ class SubtractImages(InjectCompanion):
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
 
-        panel = curr_ax.imshow(tgt_image-proj, norm=normed, cmap=plt.cm.magma)
+        panel = curr_ax.imshow(tgt_image-proj, norm=normed, cmap=plt.cm.RdBu_r)
 
         cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
-        curr_ax.set_title('observed minus klipped', size=22)
+        curr_ax.set_title('observed - KLIP ref', size=22)
 
         print_ast(f"total intensity pre-subtract:  {tgt_image.sum():.4e}\n"
                   f"total intensity post-subtract: {np.abs(tgt_image - proj).sum():.4e}")
