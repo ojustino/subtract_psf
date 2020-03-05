@@ -99,7 +99,7 @@ class ReadKlipDirectoryBase:
 
         return data_cubes
 
-    def export_to_new_dir(self, cube_list, new_dir_name):
+    def export_to_new_dir(self, cube_list, new_dir_name, overwrite=True):
         '''
         Create a new directory of data cubes that are still usable by
         KlipRetrieve. `new_dir_name` is the path to your desired directory, and
@@ -107,6 +107,11 @@ class ReadKlipDirectoryBase:
 
         A typical use of this method is to save `self.injected_cubes` after
         injecting a companion in `self.data_cubes` or `self.stackable_cubes`.
+
+        Parameters
+        ----------
+        overwrite : bool
+            invoke special options to output and overwrite prior cubes
         '''
         # check if all observations are present
         if len(cube_list) != len(self.positions) * 2:
@@ -128,7 +133,7 @@ class ReadKlipDirectoryBase:
                           'using KlipRetrieve with this new directory.')
 
         # create the new directory
-        os.mkdir(new_dir_name)
+        os.makedirs(new_dir_name, exist_ok=True)
 
         # save the FITS files
         new_dir_name += ('/' if not new_dir_name.endswith('/') else '')
@@ -137,7 +142,8 @@ class ReadKlipDirectoryBase:
             fits.writeto(new_dir_name +
                          f"{'ref' if i < len(self.positions) else 'sci'}"
                          f"_image{i % 10}.fits",
-                         cube_list[i].data, cube_list[i].header)
+                         cube_list[i].data, cube_list[i].header,
+                         overwrite=overwrite)
 
         # save attrs.pkl, adding a new attribute to signify that this new
         # directory is a derivative of a KlipRetrieve instance
