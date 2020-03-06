@@ -159,6 +159,33 @@ class ReadKlipDirectoryBase:
         with open(new_dir_name + 'original_call.pkl', 'wb') as file:
             pickle.dump(call, file)
 
+    def _locate_target_stars(self, cube_list):
+        '''
+        Label the target star locations in `self.data_cubes` so it can be
+        tracked through the alignment process, and not take up space in the
+        `self._generate_contrasts()` loop. UNDER EXAMINATION.
+        '''
+        cube_list = self._pklcopy(cube_list)
+        pix_len = .1
+
+        # translate arcsecond coordinates to pixel coordinates based on the size
+        # of images in the data cubes' slices
+        pix_center = [(size - 1) / 2 for size
+                      in self.data_cubes[-1].shape[-2:]] # y, x, while draws_sci is x, y
+        #all_draws = np.vstack((self.draws_ref, self.draws_sci)) / pix_len #x, y
+        star_locs = pix_center + self.draws_sci[:, ::-1]
+        # img_center is y, x and draws_* is x, y; one of them had to be flipped
+
+        # update target data cubes with their corresponding star location info
+        for i, cube in enumerate(cube_list[len(self.positions):]):
+            # should ref cubes have PIXSTARY?
+            cube.header['PIXSTARY'] = (star_locs[i, 0], 'brightest pixel in '
+                                       f"TARGET{im}, Y direction")
+            cube.header['PIXSTARX'] = (star_locs[i, 1], 'brightest pixel in '
+                                       f"TARGET{im}, X direction")
+
+        return cube_list
+
     def _get_og_call(self, dir_name):
         '''
         Return the original call made in the terminal to generate the data

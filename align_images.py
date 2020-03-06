@@ -371,8 +371,6 @@ class AlignImages:
         If the two sets ended up centered on different pixels, shift the
         reference images to overlap with the target images so they can be
         stacked for PSF subtraction later.
-
-        NEEDS ITS OWN PLOTTING FUNCTION; STILL THINKING OF BEST WAY TO VISUALIZE. HEAT MAP?
         '''
         # collect reference and target images as separate arrays with all slices
         ref_images = np.array([cube.data for cube
@@ -421,91 +419,206 @@ class AlignImages:
 
         return stackable_cubes
 
-    def plot_shifts(self, dir_name='', return_plot=False):
+    def plot_original_pointings(self, dir_name='', return_plot=False):
         '''
-        Compare the original mean stellar positions of each image in the
-        reference and science sets to where they ended up after this class'
-        three-step realignment process.
+        View a plot of the original, un-shifted stellar positions of each image
+        in the reference and science sets.
 
         Use the `dir_name` argument to specify a location for the plot if you'd
         like to save it. If `return_plot` is True, this method will return the
         plot as output without saving anything to disk (even if you specified a
         path for `dir_name`).
+
+        The positions in this plot are driven by the dither positions specified
+        in KlipCreate (`self.positions`), overall pointing error
+        (`self.point_err_ax`), and (minimally) jitter in the dither pointings
+        (`self.dith_err_ax`). The method also plots what the pointings would
+        look like if they were error-free.
         '''
-        fig, ax = plt.subplots(figsize=(10, 10))
+        pix_len = .1
 
-        # draw representations of NIRSpec pixels (.1 x .1 arcsecond)
-        for i in range(-5, 6):
-            ax.axhline(i*0.1, ls=':')
-            ax.axvline(i*0.1, ls=':')
-
-        # plot ideal, errorless dither cycle positions
-        ax.scatter(self.positions[:,0], self.positions[:,1],
-                    marker='+', color='#d4bd8a', lw=10, s=4**2,
-                    label='original, errorless dither cycle')
-
-        # plot original center positions for each image
-        ax.plot(self.draws_ref[:,0], self.draws_ref[:,1],
-                 marker='s', color='#ce1141', alpha=.4,
-                 linestyle=':', label='reference case pointings')
-        ax.plot(self.draws_sci[:,0], self.draws_sci[:,1],
-                 marker='s', color='#13274f', alpha=.4,
-                 linestyle=':', label='science case pointings')
-
-        # What are the shifts due to the dither cycle?
-        dith_shifts = np.array(np.round(self.positions / .1), dtype=int)
-
-        # What are the shifts due to uncertainty in overall pointing?
-        # (1-sig is .1 arcseconds)
-        ptg_shifts_ref = np.array(np.round(self.point_err_ax[0] / .1),
-                                 dtype=int)
-        ptg_shifts_sci = np.array(np.round(self.point_err_ax[1] / .1),
-                                 dtype=int)
-
-        # are the reference and science cases centered on the same pixel?
-        pix_offsets = self._align_brights(self.multipad_cubes,offsets_only=True)
-        pix_len = .1 # length of IFU pixel in arcseconds
-
-        if any(pix_offsets != 0):
-            ax.plot((self.draws_ref
-                      - (dith_shifts + ptg_shifts_ref[0]) * pix_len)[:,0],
-                     (self.draws_ref
-                      - (dith_shifts + ptg_shifts_ref[1]) * pix_len)[:,1],
-                     marker='^', color='hotpink', linestyle=':',
-                     label='unaligned ref sans pnt. error & dither offsets')
-
-        ax.plot((self.draws_ref - (dith_shifts + ptg_shifts_ref[0]
-                                    - pix_offsets[0]) * pix_len)[:,0],
-                 (self.draws_ref - (dith_shifts + ptg_shifts_ref[1]
-                                    - pix_offsets[1]) * pix_len)[:,1],
-                 marker='^', color='#ce1141',
-                 linestyle=':', label='ref sans pnt. error & dither offsets')
-
-        ax.plot((self.draws_sci
-                  - (dith_shifts + ptg_shifts_sci[0]) * pix_len)[:,0],
-                 (self.draws_sci
-                  - (dith_shifts + ptg_shifts_sci[1]) * pix_len)[:,1],
-                 marker='^', color='#13274f',
-                 linestyle=':', label='sci sans pnt. error & dither offsets')
-
-        if return_plot:
-            return ax
-
-        ax.set_xlabel('arcseconds', fontsize=14)
-        ax.set_ylabel('arcseconds', fontsize=14)
-        leg = ax.legend(bbox_to_anchor=(1.04, 1), fontsize=14)
+        fig, ax = plt.subplots(figsize=(8,8))
         plt.gca().set_aspect('equal')
 
-        # draw representations of NIRSpec pixels (.1 x .1 arcsecond)
-        #loc = mpl.ticker.MultipleLocator(base=.1)
-        #ax.xaxis.set_major_locator(loc)
-        #ax.yaxis.set_major_locator(loc)
-        #ax.grid(True, which='both', linestyle='--')
+        # get shape of cubes' x/y axes and draw pixels on plot
+        half_y_len = self.data_cubes[0].shape[-2] // 2
+        half_x_len = self.data_cubes[0].shape[-1] // 2
+        # index of data_cubes doesn't matter
+
+        for i in range(-half_y_len, half_y_len + 1):
+            ax.axhline(i * pix_len + pix_len/2,
+                       c='k', alpha=.5, ls=':', lw=1)
+
+        for i in range(-half_x_len, half_x_len + 1):
+            ax.axvline(i * pix_len + pix_len/2,
+                       c='k', alpha=.5, ls=':', lw=1)
+
+        #plt.plot(0, 0, '+', c='lightsalmon', mew=5, markersize=5**2,
+        #         zorder=-10, label='center')
+
+        # plot randomly drawn pointings
+        plt.scatter(self.draws_ref[:,0], self.draws_ref[:,1],
+                    c='#ce1141', label='reference set pointings')
+        plt.scatter(self.draws_sci[:,0], self.draws_sci[:,1],
+                    c='#13274f', label='target set pointings')
+        plt.scatter(self.positions[:,0], self.positions[:,1],
+                    marker='+', c='k', s=14**2, zorder=-5,
+                    label='intended (error-free) pointings')
+
+        ax.set_xlim(-half_x_len * pix_len, half_x_len * pix_len)
+        ax.set_ylim(-half_y_len * pix_len, half_y_len * pix_len)
+
+        ax.set_xlabel('arcesconds', fontsize=14)
+        ax.set_ylabel('arcesconds', fontsize=14)
+        ax.set_title('star locations in original pointings', fontsize=14)
+        ax.legend(fontsize=14)
+
+        if return_plot:
+            return fig
 
         if dir_name:
             plt.savefig(dir_name
                         + ('/' if not dir_name.endswith('/') else '')
-                        + 'pointing_shifts.png',
-                        dpi=300, bbox_extra_artists=(leg,), bbox_inches='tight')
+                        + 'original_pointings.png', dpi=300,
+                        bbox_extra_artists=(leg,), bbox_inches='tight')
+
+        plt.show()
+
+    def _find_fine_shifts(self, target_image):
+        '''
+        After bringing the pointings' star locations as close to (0, 0) for all
+        images and a specific target image (specified by an integer in argument
+        `target_image`), find out whether there are pixel-scale shifts that
+        could bring the former closer to the latter.
+
+        This method returns two arrays with x/y shift information to be applied
+        to the reference cubes. `fine_aligned_refs` gives the shifts in
+        arcseconds (useful for plotting in `self.plot_shifted_pointings()`,
+        while `int_aligned_refs` gives the shifts in pixels (useful in
+        `self._finalize_theo_cubes()`).
+        '''
+        pix_len = .1
+
+        # shifts that would align every image if subpixel shifts were possible
+        # (removes dithers and overall pointing error, but not dither error)
+        ideal_shifts_ref = self.positions + self.point_err_ax[0]
+        ideal_shifts_sci = self.positions + self.point_err_ax[1]
+
+        # translate these to rougher, pixel-scale shifts
+        pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
+        pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
+
+        # perform the pixel-scale shifts on ref images and chosen sci image
+        rough_aligned_refs = self.draws_ref - pixel_shifts_ref
+        rough_aligned_sci_img = (self.draws_sci
+                                 - pixel_shifts_sci)[target_image]
+
+        # measure how far reference star locations are from target's star
+        residual_ref_offsets = rough_aligned_refs - rough_aligned_sci_img
+
+        # in either axis, if a reference star is more than half a pixel away,
+        # move it by a pixel in the direction that will get it closer
+        fine_aligned_refs = np.zeros_like(residual_ref_offsets)
+        fine_aligned_refs[residual_ref_offsets > pix_len / 2] -= pix_len
+        fine_aligned_refs[residual_ref_offsets < -pix_len / 2] += pix_len
+
+        # get an array of the resulting shifts as integers
+        int_aligned_refs = np.round(fine_aligned_refs / pix_len).astype(int)
+
+        return fine_aligned_refs, int_aligned_refs
+
+    def plot_shifted_pointings(self, dir_name='', return_plot=False):
+        '''
+        **(Note that this method is only a valid representation of the alignment
+        process if you initiated KlipRetrieve() with
+        `align_style='theoretical'` -- the empirical alignment strategies work
+        differently.)**
+
+        View a suite of plots of the shifted stellar positions of each image in
+        the reference and target sets. Initially, both sets are shifted to come
+        as close to (0, 0) as possible, then the reference set is shifted once
+        more to come as close to the target set as possible.
+
+        Use the `dir_name` argument to specify a location for the plot if you'd
+        like to save it. If `return_plot` is True, this method will return the
+        plot as output without saving anything to disk (even if you specified a
+        path for `dir_name`).
+
+        The positions in this plot are driven by the dither positions specified
+        in KlipCreate (`self.positions`), overall pointing error
+        (`self.point_err_ax`), and (minimally) jitter in the dither pointings
+        (`self.dith_err_ax`). The method also plots what the pointings would
+        look like if they were error-free.
+        '''
+        pix_len = .1
+
+        # shifts that would align everything, if you could make subpixel moves
+        # (accounts for initial pointing offset, but not fine pointing jitter)
+        ideal_shifts_ref = self.positions + self.point_err_ax[0]
+        ideal_shifts_sci = self.positions + self.point_err_ax[1]
+
+        # how do those translate to more rough, pixel-scale shifts?
+        pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
+        pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
+
+        # perform the pixel-scale shifts on both sets of images
+        rough_aligned_sci = self.draws_sci - pixel_shifts_sci
+        rough_aligned_ref = self.draws_ref - pixel_shifts_ref
+
+        # make subplots to feature each target image's star along with the
+        # adjustments made to bring the references as close as possible to them
+        fig, axs = plt.subplots(2,5, figsize=(15, 10))
+        plt.gca().set_aspect('equal')
+
+        for i, row in enumerate(axs):
+            for j, ax in enumerate(row):
+                img = len(row) * i + j
+                fine_aligned_ref = self._find_fine_shifts(img)[0]
+
+                # plot this iteration's target star location
+                ax.scatter(rough_aligned_sci[:,0][img],
+                           rough_aligned_sci[:,1][img],
+                           marker='X', s=15**2, color='#ce1141',
+                           label='target image star location')
+
+                # plot before and after of reference fine align process
+                ax.scatter(rough_aligned_ref[:,0], rough_aligned_ref[:,1],
+                           marker='D', edgecolors='#008ca8', s=10**2,
+                           lw=3, facecolor='w', alpha=.4,
+                           label='reference image star location (rough)')
+                ax.scatter((rough_aligned_ref + fine_aligned_ref)[:,0],
+                           (rough_aligned_ref + fine_aligned_ref)[:,1],
+                           c='#13274f',
+                           label='reference image star location (fine)')
+
+                # draw the center pixel in the field of view
+                ax.axhline(-pix_len / 2, color='k', alpha=.5)
+                ax.axhline(pix_len / 2, color='k', alpha=.5)
+                ax.axvline(-pix_len / 2, color='k', alpha=.5)
+                ax.axvline(pix_len / 2, color='k', alpha=.5)
+
+                ax.set_title(f"target image {img}", fontsize=14)
+                ax.set_aspect('equal')
+                ax.plot(0, 0, marker='+', color='k')
+                ax.set_xlim(-pix_len * 2.5/2, pix_len * 2.5/2)
+                ax.set_ylim(-pix_len * 2.5/2, pix_len * 2.5/2)
+
+                handles, labels = ax.get_legend_handles_labels()
+
+        axs[0, 0].set_xlabel('arcesconds', fontsize=14)
+        axs[0, 0].set_ylabel('arcesconds', fontsize=14)
+
+        fig.suptitle('star locations in shifted pointings, theoretical case',
+                     y= .88, fontsize=20)
+        fig.legend(handles, labels, loc='center', fontsize=14)
+
+        if return_plot:
+            return fig
+
+        if dir_name:
+            plt.savefig(dir_name
+                        + ('/' if not dir_name.endswith('/') else '')
+                        + 'shifted_pointings.png', dpi=300,
+                        bbox_extra_artists=(leg,), bbox_inches='tight')
 
         plt.show()

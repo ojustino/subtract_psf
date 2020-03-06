@@ -146,7 +146,7 @@ class SubtractImages(InjectCompanion):
 
     def _get_klip_basis(self, ref, explain=None, modes=None, verbose=False):
         '''
-        Use a a Karhunen-LoÃ¨ve transform to create a set of basis vectors from a
+        Use a a Karhunen-Loève transform to create a set of basis vectors from a
         reference library to be used for KLIP projection later on.
 
         `ref` is a numpy array (not HDUList) of some number of reference images.
@@ -592,7 +592,7 @@ class SubtractImages(InjectCompanion):
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
 
-        panel = curr_ax.imshow(tgt_image-proj, norm=normed, cmap=plt.cm.RdBu_r)
+        panel = curr_ax.imshow(tgt_image - proj, norm=normed, cmap=plt.cm.RdBu_r)
 
         cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
@@ -721,9 +721,6 @@ class SubtractImages(InjectCompanion):
                       ' | '
                       f"post-sub: {post_prof[i,1, np.argmin(np.abs(post_prof[i, 0] - 1))]:.4e}")
 
-        if return_plot:
-            return ax
-
         ax.set_xlim(0,)
         ax.set_xlabel('radius (arcseconds)', fontsize=16)
         ax.set_ylabel('contrast', fontsize=16)
@@ -734,6 +731,9 @@ class SubtractImages(InjectCompanion):
                      fontsize=16)
         ax.legend(fontsize=14, ncol=2 if show_radial else 1)
 
+        if return_plot:
+            return fig
+
         if dir_name:
             plt.savefig(dir_name
                         + ('/' if not dir_name.endswith('/') else '')
@@ -743,3 +743,25 @@ class SubtractImages(InjectCompanion):
         plt.show()
 
         return post_prof
+
+
+    def export_subtracted_cubes(cube_list, new_dir_name):
+        '''
+        A convenience function for quickly subtracting an HDUList of data cubes
+        by its corresponding HDUList of KLIP projections and exporting the
+        result to `new_dir_name`.
+
+        `cube_list` should either be `self.stackable_cubes`,
+        `self.injected_cubes`, or an HDUList of your own whose target cubes
+        match the dimensions of those in `self.klip_proj`. The target cubes in
+        `cube_list` are then subtracted by their analogs in `self.klip_proj`,
+        and the result is exported using `self.export_to_new_dir()`.
+        '''
+        tgt_list = self._pklcopy(cube_list)[-len(self.positions):]
+        ref_list = self.stackable_cubes[:len(self.positions)]
+
+        for i, cube in enumerate(tgt_list):
+            cube.data -= self.klip_proj[i].data
+
+        merged_list = ref_list + tgt_list
+        self.export_to_new_dir(merged_list, new_dir_name)
