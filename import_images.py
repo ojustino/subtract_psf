@@ -3,6 +3,7 @@ import os
 import pickle
 import warnings
 
+import astropy
 from astropy.io import fits
 from align_images import AlignImages
 from inject_images import InjectCompanion
@@ -158,6 +159,16 @@ class ReadKlipDirectoryBase:
             call = pickle.load(file)
         with open(new_dir_name + 'original_call.pkl', 'wb') as file:
             pickle.dump(call, file)
+
+        # If there was an injected companion, save that out too.
+        if hasattr(self, '_injected_companion_contrast_spectrum'):
+            outtable = astropy.table.Table([self.wvlnths, self._injected_companion_contrast_spectrum],
+                                           names=['wavelength', 'contrast_spectrum'])
+            outtable.meta['SEP_R'] = self._injected_companion_separation
+            outtable.meta['POSANGLE'] = self._injected_companion_position_angle
+            outtable.meta['SEP_X'] = self._injected_companion_sep_x
+            outtable.meta['SEP_Y'] = self._injected_companion_sep_y
+            outtable.write(new_dir_name + 'injected_companion_spectrum.ecsv', overwrite=True)
 
     def _locate_target_stars(self, cube_list):
         '''

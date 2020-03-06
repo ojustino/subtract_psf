@@ -765,3 +765,8 @@ class SubtractImages(InjectCompanion):
 
         merged_list = ref_list + tgt_list
         self.export_to_new_dir(merged_list, new_dir_name)
+
+
+
+
+        return tgt_list

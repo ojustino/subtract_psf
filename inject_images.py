@@ -275,6 +275,10 @@ class InjectCompanion:
             # use astronomical convention where PA=0 is north / up
             s_y = np.round(pix_sep * np.cos(theta)).astype(int)
             s_x = np.round(pix_sep * -np.sin(theta)).astype(int)
+            self._injected_companion_position_angle = position_angle
+        self._injected_companion_separation = separation
+        self._injected_companion_sep_x = s_x
+        self._injected_companion_sep_y = s_y
 
         # shift a copy of the star's PSF to the specified companion position
         # (pad doesn't accept negatives, so we must add zeros/slice creatively)
@@ -297,6 +301,8 @@ class InjectCompanion:
             star_fluxes = self._get_bin_fluxes(star_spec)
             comp_fluxes = self._get_bin_fluxes(comp_spec)
             slices_scaled_1x = (comp_fluxes / star_fluxes).value
+
+            self._injected_companion_contrast_spectrum = slices_scaled_1x
 
             # extend the contrast array to repeat once per data cube
             slices_scaled = np.tile(slices_scaled_1x, (tgt_imgs.shape[0], 1))
