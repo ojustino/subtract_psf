@@ -740,7 +740,7 @@ class SubtractImages(InjectCompanion):
 
         plt.show()
 
-    def export_subtracted_cubes(cube_list, new_dir_name):
+    def export_subtracted_cubes(self, cube_list, new_dir_name):
         '''
         A convenience function for quickly subtracting an HDUList of data cubes
         by its corresponding HDUList of KLIP projections and exporting the
