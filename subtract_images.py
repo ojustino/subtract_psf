@@ -146,7 +146,7 @@ class SubtractImages(InjectCompanion):
 
     def _get_klip_basis(self, ref, explain=None, modes=None, verbose=False):
         '''
-        Use a a Karhunen-Loève transform to create a set of basis vectors from a
+        Use a a Karhunen-Loï¿½ve transform to create a set of basis vectors from a
         reference library to be used for KLIP projection later on.
 
         `ref` is a numpy array (not HDUList) of some number of reference images.
@@ -745,7 +745,7 @@ class SubtractImages(InjectCompanion):
         return post_prof
 
 
-    def export_subtracted_cubes(cube_list, new_dir_name):
+    def export_subtracted_cubes(self, cube_list, new_dir_name):
         '''
         A convenience function for quickly subtracting an HDUList of data cubes
         by its corresponding HDUList of KLIP projections and exporting the
