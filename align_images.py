@@ -371,8 +371,6 @@ class AlignImages:
         If the two sets ended up centered on different pixels, shift the
         reference images to overlap with the target images so they can be
         stacked for PSF subtraction later.
-
-        NEEDS ITS OWN PLOTTING FUNCTION; STILL THINKING OF BEST WAY TO VISUALIZE. HEAT MAP?
         '''
         # collect reference and target images as separate arrays with all slices
         ref_images = np.array([cube.data for cube
@@ -486,6 +484,49 @@ class AlignImages:
 
         plt.show()
 
+    def _find_fine_shifts(self, target_image):
+        '''
+        After bringing the pointings' star locations as close to (0, 0) for all
+        images and a specific target image (specified by an integer in argument
+        `target_image`), find out whether there are pixel-scale shifts that
+        could bring the former closer to the latter.
+
+        This method returns two arrays with x/y shift information to be applied
+        to the reference cubes. `fine_aligned_refs` gives the shifts in
+        arcseconds (useful for plotting in `self.plot_shifted_pointings()`,
+        while `int_aligned_refs` gives the shifts in pixels (useful in
+        `self._finalize_theo_cubes()`).
+        '''
+        pix_len = .1
+
+        # shifts that would align every image if subpixel shifts were possible
+        # (removes dithers and overall pointing error, but not dither error)
+        ideal_shifts_ref = self.positions + self.point_err_ax[0]
+        ideal_shifts_sci = self.positions + self.point_err_ax[1]
+
+        # translate these to rougher, pixel-scale shifts
+        pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
+        pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
+
+        # perform the pixel-scale shifts on ref images and chosen sci image
+        rough_aligned_refs = self.draws_ref - pixel_shifts_ref
+        rough_aligned_sci_img = (self.draws_sci
+                                 - pixel_shifts_sci)[target_image]
+
+        # measure how far reference star locations are from target's star
+        residual_ref_offsets = rough_aligned_refs - rough_aligned_sci_img
+
+        # in either axis, if a reference star is more than half a pixel away,
+        # move it by a pixel in the direction that will get it closer
+        fine_aligned_refs = np.zeros_like(residual_ref_offsets)
+        fine_aligned_refs[residual_ref_offsets > pix_len / 2] -= pix_len
+        fine_aligned_refs[residual_ref_offsets < -pix_len / 2] += pix_len
+
+        # get an array of the resulting shifts as integers
+        int_aligned_refs = np.round(fine_aligned_refs / pix_len).astype(int)
+
+        return fine_aligned_refs, int_aligned_refs
+
     def plot_shifted_pointings(self, dir_name='', return_plot=False):
         '''
         **(Note that this method is only a valid representation of the alignment
@@ -513,16 +554,16 @@ class AlignImages:
 
         # shifts that would align everything, if you could make subpixel moves
         # (accounts for initial pointing offset, but not fine pointing jitter)
-        ideal_shifts_ref = ex.positions + ex.point_err_ax[0]
-        ideal_shifts_sci = ex.positions + ex.point_err_ax[1]
+        ideal_shifts_ref = self.positions + self.point_err_ax[0]
+        ideal_shifts_sci = self.positions + self.point_err_ax[1]
 
         # how do those translate to more rough, pixel-scale shifts?
         pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
         pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
 
         # perform the pixel-scale shifts on both sets of images
-        rough_aligned_sci = ex.draws_sci - pixel_shifts_sci
-        rough_aligned_ref = ex.draws_ref - pixel_shifts_ref
+        rough_aligned_sci = self.draws_sci - pixel_shifts_sci
+        rough_aligned_ref = self.draws_ref - pixel_shifts_ref
 
         # make subplots to feature each target image's star along with the
         # adjustments made to bring the references as close as possible to them
@@ -532,7 +573,7 @@ class AlignImages:
         for i, row in enumerate(axs):
             for j, ax in enumerate(row):
                 img = len(row) * i + j
-                fine_aligned_ref = self._align_to_sci_img(img)[0]
+                fine_aligned_ref = self._find_fine_shifts(img)[0]
 
                 # plot this iteration's target star location
                 ax.scatter(rough_aligned_sci[:,0][img],
