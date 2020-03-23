@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import warnings
 
 
 class AlignImages:
@@ -32,7 +32,7 @@ class AlignImages:
     def __init__(self):
         self._shifted = False
 
-    def _remove_offsets(self, align_style):
+    def _remove_offsets(self, align_style, verbose=True):
         '''
         Removes shifts in images due to dither cycle in both the reference and
         science sets of images. Then, makes sure both sets are centered over
@@ -40,462 +40,386 @@ class AlignImages:
 
         Argument `align_style` controls which method is used for alignment --
         'theoretical' (default) removes overall pointing error and aligns
-        bright pixels afterward, while 'empirical1' and 'empirical2' skip
-        directly to bright pixel alignment.
+        bright pixels afterward, 'empirical2' skips directly to bright pixel
+        alignment, choosing a target position for the bright pixel and shifting
+        all slices of all data cubes to match it.
 
-        'empirical1' aligns based on the mean brightest pixel in each data cube
-        -- even if particular slices have a bright pixel that's slightly
-        off-line. 'empirical2' chooses a target position the bright pixel and
-        shifts all slices of all data cubes to match it.
-
-        I believe that 'empirical2' should lead to better results than
-        'empirical1' since there won't be any off-line stragglers. The
-        comparison with 'theoretical' will be interesting to see.
+        Argument `verbose` is a boolean that, when True, allows the chosen
+        alignment method to print progress messages.
         '''
         if self._shifted == True:
             raise ValueError('PSF images have already been shifted')
 
-        # remove dither offsets
-        padded_cubes = self._shift_dither_pos(self.data_cubes)
-
-        # shift all slices of all images so their bright pixels coincide
-        if align_style == 'empirical2': # (newest)
-            stackable_cubes = self._align_brights_newest(padded_cubes)
-
-        # or remove pointing error, then....
+        if align_style == 'empirical2':
+            # shift all slices of all images so their bright pixels coincide
+            padded_cubes = self._align_brights_empirical2(self.data_cubes,
+                                                          verbose=verbose)
+        elif align_style == 'theoretical':
+            # calculate stellar position in each cube and align them
+            padded_cubes = self._align_brights_theoretical(self.data_cubes,
+                                                           verbose=verbose)
         else:
-            multipad_cubes = self._shift_overall_ptg(padded_cubes)
-            if align_style == 'theoretical': # (old)
-                # ...calculate star's position and align
-                stackable_cubes = self._align_brights_old(multipad_cubes)
-            elif align_style == 'empirical1': # (newer)
-                # ...align based on mean brightest pixel in each set of images
-                # (even if particular slices are slightly offset)
-                stackable_cubes = self._align_brights_new(multipad_cubes)
-            else:
-                raise ValueError("align_style must equal 'theoretical', "
-                                 "'empirical1', or 'empirical2'.")
-
+            raise ValueError("align_style must be 'theoretical' or "
+                             "'empirical2'.")
         self._shifted = True
-        return stackable_cubes
+        return padded_cubes
 
-    def _pad_cube_list(self, cube_list, pad_x, pad_y):
+    def _pad_and_shift_cubes(self, cube_imgs, shifts, buffer=True):
         '''
-        Pads both axes of images in a list of data cubes so the real contents
-        can be shifted without rolling over an edge. The amount of padding to
-        add on both axes is user-specified, and padded indices contain NaNs.
-        '''
-        print(f"{cube_list[0].data.shape} data cube shape at beginning")
+        Pads and uses creative slicing to shift images in data cubes by
+        prescribed amounts. Padded indices contain NaNs, and the amount of
+        padding depends on the maxiumum shift value in the x/y axes. An
+        upgraded version of the former `self.pad_cube_list()` method.
 
-        # create array with all slices of all images in cube_list
+        Argument `cube_imgs` should be a 4D array made from an HDUList of data
+        cubes. (`self.data_cubes`, `self.stackable_cubes`, etc.).
+
+        Argument `shifts` is a 2D array of the translations that will be made
+        to the images in each cube. It should be the same length as `imgs`; all
+        slices of a given data cube are shifted by the same amount. The amount
+        of padding in the returned depends on the maximum value in both axes of
+        `shifts`.
+
+        Argument `buffer` is boolean that controls whether to add an extra row
+        and column of padding on both ends of the x/y axes. It is mainly used
+        when `align_style` is 'theoretical' and fine shifts with
+        `self._fine_shift_theo_cubes()` are needed.
+        '''
+        cube_imgs = cube_imgs.copy()
+
+        # decide x/y padding by finding maximum shift required in each axis
+        # (plus one to account for possible fine adjustments later on)
+        pad_x, pad_y = np.abs(shifts).max(axis=0).astype(int) + 1
+
+        # add an extra row/column to the start and end of x/y axes in final
+        # array so there's data to shift if a ref fine adjust is needed later
+        if buffer == True:
+            shifted_imgs = np.zeros(cube_imgs.shape[0:2]
+                                    + (cube_imgs.shape[2] + 2,
+                                       cube_imgs.shape[3] + 2))
+        else:
+            shifted_imgs = np.zeros(cube_imgs.shape)
+
+        # pad images in each cube by prescribed amounts, then
+        # slice them to shifted_imgs' shape
+        for i, cube in enumerate(cube_imgs):
+            y_ind0 = pad_y + shifts[i][1]
+            y_ind1 = -pad_y + shifts[i][1]
+
+            x_ind0 = pad_x + shifts[i][0]
+            x_ind1 = -pad_x + shifts[i][0]
+
+            if buffer == True:
+                y_ind0 -= 1; y_ind1 += 1
+                x_ind0 -= 1; x_ind1 += 1
+
+            y_ind1 = None if y_ind1 == 0 else y_ind1
+            x_ind1 = None if x_ind1 == 0 else x_ind1
+
+            shifted_imgs[i] = np.pad(cube, #cube.data
+                                     ((0, 0), (pad_y, pad_y), (pad_x, pad_x)),
+                                     mode='constant',
+                                     constant_values=np.nan)[:,
+                                                             y_ind0 : y_ind1,
+                                                             x_ind0 : x_ind1]
+            # note flipped axes
+
+        return shifted_imgs
+
+    def _align_brights_empirical2(self, cube_list, verbose=True):
+        '''
+        A cube alignment strategy that shifts pixels based only on what it sees
+        empirically, assuming that the brightest pixel is the one that holds the
+        star and ensuring that pixel falls in the same location in all cubes.
+        Adapted from former `self._align_brights_newest()` method.
+
+        Argument `cube_list` is the HDUList of data cubes to be aligned;
+        `self.data_cubes` is the usual candidate.
+
+        Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.
+
+        The logic is that although we know our desired dither cycle, we may not
+        know our errors a priori, so the other approach may be too idealized to
+        trust completely.
+
+        The process is similar to those of `self._generate_klip_proj()` and
+        `self._generate_contrasts()` in KlipRetrieve(), which calculate the mean
+        positions of the brightest pixels from the reference and science images
+        and assume that to be the star's location.
+        '''
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n', end='')
+        my_pr = lambda txt: print_ast(txt) if verbose else None
+        my_pr("aligning all data cubes' images by their bright pixels...")
+
         padded_list = self._pklcopy(cube_list)
         cube_imgs = np.array([cb.data for cb in padded_list])
 
-        # pad images with NaNs by requested amounts on the image axes
-        pad_x = int(abs(pad_x)); pad_y = int(abs(pad_y))
-        padded_imgs = np.pad(cube_imgs, ((0, 0), (0, 0),
-                                         (pad_y, pad_y), (pad_x, pad_x)),
-                             mode='constant', constant_values=np.nan)
-        # (y axis is dimension 2, x axis is dimension 3. others are left as-is)
+        # for each set, find indices of brightest pixel in each cube's 0th slice
+        # (most times, all slices of a cube will share the same bright spot)
+        bright_pixels = np.array([np.unravel_index(np.argmax(cube_imgs[i][0]),
+                                                   cube_imgs[i][0].shape)[::-1]
+                                  for i in range(cube_imgs.shape[0])])
 
-        # update the new HDUList with the padded data
+        # choose the center pixel (in x/y) as the intended star location
+        chosen_pixel = np.array(cube_imgs.shape[2:]) // 2
+
+        # get distances of other images' bright pixels from that location
+        tot_shifts = bright_pixels - chosen_pixel
+
+        # pad images and make appropriate shifts
+        aligned_cubes = self._pad_and_shift_cubes(cube_imgs, tot_shifts,
+                                                  buffer=False)
+
+        # update the new HDUList
         for i, cube in enumerate(padded_list):
-            cube.data = padded_imgs[i]
+            cube.data = aligned_cubes[i]
 
-        print(f"{padded_list[0].data.shape} data cube shape at end",
-              end='\n\n')
+            # update target star location info to account for padding/shifts
+            if i >= len(self.positions):
+                cube.header['PIXSTARY'] += -tot_shifts[i][1]
+                cube.header['PIXSTARX'] += -tot_shifts[i][0]
+
         return padded_list
 
-    def _shift_dither_pos(self, cube_list):
+    def _align_brights_theoretical(self, cube_list, verbose=True):
         '''
-        On a pixel scale, removes offsets in a data cube's images that occur as
-        a result of the dither process used in its "observations."
+        An idealized alignment strategy that, at pixel-scale, begins by
+        shifting cubes through removing their respective observations' dither
+        steps and overall pointing errors. (Takes from former
+        `self._shift_overall_ptg()`, `self._shift_dither_pos()`, and
+        `self._align_brights_old()` methods.)
+
+        Argument `cube_list` is the HDUList of data cubes to be aligned;
+        `self.data_cubes` is the usual candidate.
+
+        Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.
+
+        (Jitter in the dither cycle is small enough that it's ignored here.)
         '''
-        print('commence removal of dither shifts')
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n', end='')
+        my_pr = lambda txt: print_ast(txt) if verbose else None
+        my_pr('aligning data cube imgs by removing respective '
+              'dither offsets/ptg. errors...')
 
-        # What are the shifts due to the dither cycle?
-        pix_len = .1 # length of IFU pixel in arcseconds
-        dith_shifts = np.round(self.positions / pix_len).astype(int)
-
-        # duplicate shifts -- one set for ref images, repeat for sci images
-        dith_shifts = np.tile(dith_shifts, (2,1))
-
-        max_dith_x, max_dith_y = np.abs(dith_shifts).max(axis=0)
-
-        # shifts due to dither cycle's pointing uncertainty (stddev .004 arcsec)
-        # are too small to shift for with the IFU's .1 arcsecond/pix resolution
-
-        # Add padding before undoing dithers
-        padded_cubes = self._pad_cube_list(self._pklcopy(cube_list),
-                                           max_dith_x, max_dith_y)
-
-        # Undo dither steps (as much as possible, pixel-wise) by shifting data
-        for i, cube in enumerate(padded_cubes):
-            cube.data = np.roll(cube.data,
-                                (-dith_shifts[i, 1], -dith_shifts[i, 0]),
-                                axis=(1,2))
-            # negative movement because you're *undoing* the original shift
-            # in that direction. note that axis 0 of cube.data is the
-            # wavelength dimension; we're focused on x (2) and y (1), the PSF
-
-        return padded_cubes
-
-    def _shift_overall_ptg(self, padded_cubes):
-        '''
-        On a pixel scale, removes offsets in images that occur as a result of
-        JWST's overall pointing error on both axes.
-        '''
-        print('commence removal of pointing error')
-
-        # What are the shifts due to uncertainty in overall pointing?
-        # (1-sig is .1 arcseconds)
-        pix_len = .1 # length of IFU pixel in arcseconds
-        ptg_shifts_ref = np.round(self.point_err_ax[0] / pix_len).astype(int)
-        ptg_shifts_sci = np.round(self.point_err_ax[1] / pix_len).astype(int)
-
-        max_ptg_x = np.abs([ptg_shifts_ref[0], ptg_shifts_sci[0]]).max()
-        max_ptg_y = np.abs([ptg_shifts_ref[1], ptg_shifts_sci[1]]).max()
-
-        # Add padding before undoing pointing error
-        multipad_cubes = self._pad_cube_list(self._pklcopy(padded_cubes),
-                                             max_ptg_x, max_ptg_y)
-
-        # Undo pointing error (as much as possible, pixel-wise) by shifting data
-        for i, cube in enumerate(multipad_cubes):
-            which_ptg = (ptg_shifts_ref if i < len(self.positions)
-                         else ptg_shifts_sci)
-
-            cube.data = np.roll(cube.data, (-which_ptg[1], -which_ptg[0]),
-                                axis=(1,2))
-            # negative movement because you're *undoing* the original shift
-            # in that direction. note that axis 0 is the wavelength dimension
-            # we're focused on x (2) and y (1) in the PSF
-
-        return multipad_cubes
-
-    def _align_brights_new(self, multipad_cubes, pixels_only=False):
-        '''
-        After removing offsets in self._shift_dither_pos() and
-        self._shift_overall_ptg(), follow a process similar to
-        _generate_klip_proj() and _generate_contrasts() in KlipRetrieve to
-        calculate the mean positions of the brightest pixels from the reference
-        and science images.
-
-        If the two sets ended up centered on different pixels, shift the
-        reference images to overlap with the target images so they can be
-        stacked for PSF subtraction later.
-
-        (Assumes that the brightest pixel in an image is the one containing
-        the central star. Argument `pixels_only` is used to return each image's
-        average bright pixel location and is in self.plot_shifts().)
-        '''
-        # collect reference and target images as separate arrays with all slices
-        ref_images = np.array([cube.data for cube
-                               in multipad_cubes[:len(self.positions)]])
-        tgt_images = np.array([cube.data for cube
-                               in multipad_cubes[len(self.positions):]])
-
-        # for each set, find indices of brightest pixel in each cube's 0th slice
-        # (all slices of a given image cube should have the same bright spot)
-        ref_bright_pixels = [np.unravel_index(np.nanargmax(ref_images[i, 0]),
-                                              ref_images[i, 0].shape)
-                             for i in range(ref_images.shape[0])]
-        tgt_bright_pixels = [np.unravel_index(np.nanargmax(tgt_images[i, 0]),
-                                              tgt_images[i, 0].shape)
-                             for i in range(tgt_images.shape[0])]
-
-        # get mean pixel position of the brightest pixel among cubes in each set
-        # (also, remembering that y comes before x, flip their orders)
-        ref_mean_bright = np.mean(ref_bright_pixels, axis=0)[::-1]
-        tgt_mean_bright = np.mean(tgt_bright_pixels, axis=0)[::-1]
-        print(ref_bright_pixels, tgt_bright_pixels, sep='\n')
-        print('r', ref_mean_bright, 't', tgt_mean_bright)
-        print('r', ref_mean_bright.round(), 't', tgt_mean_bright.round())
-        print(np.round(tgt_mean_bright - ref_mean_bright).astype(int))
-
-        # calculate pixel offset between the two sets' mean bright pixels
-        pix_offset = np.round(tgt_mean_bright - ref_mean_bright).astype(int)
-
-        if pixels_only:
-            #print('r', ref_mean_bright, 't', tgt_mean_bright, 'off', pix_offset)
-            return ref_mean_bright, tgt_mean_bright
-
-        print('Pixel offset of mean brightest pixel in sci & ref sets is '
-              f"{pix_offset}")
-
-        # if there is a pixel offset, shift the reference images to eliminate it
-        if any(pix_offset != 0):
-            # pix_offset values should only be 0 or +/-1; warn if not the case
-            if all(x not in [-1, 0, 1] for x in pix_offset):
-                warnings.warn('Offset greater than 1 pixel found between mean '
-                              'bright pixels in reference and science sets. '
-                              'Defaulting to _align_brights_old()')
-                return self._align_brights_old(multipad_cubes)
-
-            print('commence alignment of ref images with sci images')
-            # add padding before shifting (for ALL cubes)
-            stackable_cubes = self._pad_cube_list(self._pklcopy(multipad_cubes),
-                                                  pix_offset[0], pix_offset[1])
-
-            # make the adjustment and align the ref & sci images as best we can
-            for cube in stackable_cubes[:len(self.positions)]:
-                cube.data = np.roll(cube.data, (pix_offset[1], pix_offset[0]),
-                                    axis=(1,2))
-                # note that axis 0 is the wavelength dimension
-                # we're focused on x (2) and y (1) in the PSF
-
-            return stackable_cubes
-
-        # if no pixel offset, return multipad_cubes -- it's already stackable
-        else:
-            return multipad_cubes
-
-    def _align_brights_old(self, multipad_cubes, offsets_only=False):
-        '''
-        THIS IS THE OLD METHOD OF ALIGNING THE REFERENCE AND SCIENCE SETS.
-        MARKED FOR ARCHIVAL IF THE NEW METHOD CONTINUES TO WORK.
-
-        After removing offsets in self._shift_dither_pos() and
-        self._shift_overall_ptg(), calculate the mean positions of the brightest
-        pixels from the reference and science images. Use these values to
-        determine whether the two sets of images ended up centered on different
-        pixels (and print the result).
-
-        If this is so, follow a similar process as before to shift the reference
-        images to the pixel upon which the science images are centered.
-        '''
-        # What are the shifts due to the dither cycle?
-        dith_shifts = np.array(np.round(self.positions / .1), dtype=int)
-
-        # What are the shifts due to uncertainty in overall pointing?
-        # (stddev is .1 arcseconds)
-        ptg_shifts_ref = np.round(self.point_err_ax[0] / .1).astype(int)
-        ptg_shifts_sci = np.round(self.point_err_ax[1] / .1).astype(int)
-
-        # record mean positions of bright spots in ref and sci images
-        pix_len = .1 # length of IFU pixel in arcseconds
-        ref_means = (self.draws_ref
-                     - (dith_shifts + ptg_shifts_ref) * pix_len).mean(axis=0)
-        sci_means = (self.draws_sci
-                     - (dith_shifts + ptg_shifts_sci) * pix_len).mean(axis=0)
-
-        ref_xs, ref_ys = ref_means
-        sci_xs, sci_ys = sci_means
-
-        print('mean star position by set',
-              '---',
-              f"ref: ({ref_xs:.4f}, {ref_ys:.4f})",
-              f"sci: ({sci_xs:.4f}, {sci_ys:.4f})", sep='\n', end='\n\n')
-
-        pythag_sep = np.hypot(ref_xs - sci_xs, ref_ys - sci_ys)
-        ideal_sep = .01 # arcseconds
-
-        reshift = True if pythag_sep > ideal_sep else False
-        print('pythagorean separation between sets is '
-              f"{'LARGER THAN OPTIMAL at' if reshift else ''} "
-              f"{pythag_sep:.4f} arcseconds")
-
-        if reshift:
-            # Shift the ref images to each of the four pixels around (0, 0),
-            # choosing the one with the smallest dist from the sci images
-
-            # pre-create arrays to store distances for each case and the
-            # adjustment made to ref_means used to get there
-            dists = np.zeros(4)
-            shifts = np.zeros((4,2), dtype=int)
-
-            # simulate shifts by flipping signs of ref images' mean position,
-            # e.g. +x,-y; -x,-y; -x,+y; +x,+y
-            last_coord = False
-            j = 0
-
-            while j <= 3:
-                ind = int(last_coord)
-                if ref_means[ind] > 0:
-                    ref_means[ind] -= pix_len
-
-                    shifts[j] = shifts[j - 1]
-                    shifts[j, ind] -= 1
-                else:
-                    ref_means[ind] += pix_len
-
-                    shifts[j] = shifts[j - 1]
-                    shifts[j, ind] += 1
-
-                dists[j] = np.hypot(ref_means[0]-sci_xs, ref_means[1]-sci_ys)
-
-                #print(ref_means) # ensure all values are less than pix_len
-                last_coord = not last_coord
-                j += 1
-
-            # save the ref_means adjustment that minimizes trans-set separation
-            closest_dist = shifts[np.argmin(dists)]
-            # (note that dists[-1] is the original ref_xs/ref_ys)
-
-            print('post-alignment separation is '
-                  f"{'still notable at' if dists.min() < ideal_sep else ''}"
-                  f" {dists.min():.4f} arcseconds")
-
-            if offsets_only:
-                return closest_dist
-
-            # add padding before shifting (for ALL cubes)
-            stackable_cubes = self._pad_cube_list(self._pklcopy(multipad_cubes),
-                                                  1, 1)
-
-            # make the adjustment and align the ref & sci images as best we can
-            for cube in stackable_cubes[:len(self.positions)]:
-                cube.data = np.roll(cube.data,
-                                    (closest_dist[1], closest_dist[0]),
-                                    axis=(1,2))
-                # note that axis 0 is the wavelength dimension
-                # we're focused on x (2) and y (1) in the PSF
-
-        return stackable_cubes
-
-    def _align_brights_newest(self, padded_cubes, offsets_only=False):
-        '''
-        ALTERNATE METHOD of alignment that tries to shift pixels only based on
-        what it sees empirically after self._shift_dither_pos() has removed the
-        dither offsets. (We may not know the other errors a priori, so the
-        other approach could be idealized to some extent.)
-
-        Argument `offsets_only` is used to return pixel offset for plotting in
-        self.plot_shifts().
-
-        The process is similar to those of  _generate_klip_proj() and
-        _generate_contrasts() in KlipRetrieve, which calculate the mean
-        positions of the brightest pixels from the reference and science images
-        and assume that to be the star's location.
-
-        If the two sets ended up centered on different pixels, shift the
-        reference images to overlap with the target images so they can be
-        stacked for PSF subtraction later.
-        '''
-        # collect reference and target images as separate arrays with all slices
-        ref_images = np.array([cube.data for cube
-                               in padded_cubes[:len(self.positions)]])
-        tgt_images = np.array([cube.data for cube
-                               in padded_cubes[len(self.positions):]])
-
-        # for each set, find indices of brightest pixel in each cube's 0th slice
-        # (all slices of a given image cube should have the same bright spot)
-        ref_bright_pixels = [np.unravel_index(np.nanargmax(ref_images[i, 0]),
-                                              ref_images[i, 0].shape)[::-1]
-                             for i in range(ref_images.shape[0])]
-        tgt_bright_pixels = [np.unravel_index(np.nanargmax(tgt_images[i, 0]),
-                                              tgt_images[i, 0].shape)[::-1]
-                             for i in range(tgt_images.shape[0])]
-
-        print(ref_bright_pixels, '\n', tgt_bright_pixels)
-
-        if offsets_only:
-            #print('r', ref_mean_bright, 't', tgt_mean_bright, 'off', pix_offset)
-            return ref_bright_pixels, tgt_bright_pixels
-
-        # save 0th tgt image's bright pixel as intended location in other images
-        chosen_pixel = tgt_bright_pixels[0]
-
-        # get distance of other images' bright pixels from that location
-        # (tgt_offsets[0] will be (0, 0) by construction)
-        all_offsets = (chosen_pixel
-                       - np.concatenate((ref_bright_pixels, tgt_bright_pixels)))
-
-        # pad by max separation of other images' bright pixels from chosen_pixel
-        max_off_y, max_off_x = np.abs(all_offsets).max(axis=0)
-        print(max_off_y, max_off_x)
-        #max_off_y, max_off_x = np.maximum(ref_offsets, tgt_offsets).max(axis=0)
-        stackable_cubes = self._pad_cube_list(self._pklcopy(padded_cubes),
-                                              max_off_y, max_off_x)
-
-        # shift other images so their bright pixels align with 0th target img's
-        for i, cube in enumerate(stackable_cubes):
-            if any(all_offsets[i] != 0): # ...if necessary
-                cube.data = np.roll(cube.data,
-                                    (all_offsets[i, 1], all_offsets[i, 0]),
-                                    axis=(1,2))
-                # note that axis 0 is the wavelength dimension
-                # we're focused on x (2) and y (1) in the PSF
-
-        return stackable_cubes
-
-    def plot_original_pointings(self, dir_name='', return_plot=False):
-        '''
-        View a plot of the original, un-shifted stellar positions of each image
-        in the reference and science sets.
-
-        Use the `dir_name` argument to specify a location for the plot if you'd
-        like to save it. If `return_plot` is True, this method will return the
-        plot as output without saving anything to disk (even if you specified a
-        path for `dir_name`).
-
-        The positions in this plot are driven by the dither positions specified
-        in KlipCreate (`self.positions`), overall pointing error
-        (`self.point_err_ax`), and (minimally) jitter in the dither pointings
-        (`self.dith_err_ax`). The method also plots what the pointings would
-        look like if they were error-free.
-        '''
         pix_len = .1
+        padded_list = self._pklcopy(cube_list)
+        cube_imgs = np.array([cb.data for cb in padded_list])
 
-        fig, ax = plt.subplots(figsize=(8,8))
-        plt.gca().set_aspect('equal')
+        # shifts that would align every image if subpixel shifts were possible
+        # (removes dithers and overall pointing error, but not dither error)
+        ideal_shifts_ref = self.positions + self.point_err_ax[0]
+        ideal_shifts_sci = self.positions + self.point_err_ax[1]
 
-        # get shape of cubes' x/y axes and draw pixels on plot
-        half_y_len = self.data_cubes[0].shape[-2] // 2
-        half_x_len = self.data_cubes[0].shape[-1] // 2
-        # index of data_cubes doesn't matter
+        # translate these to rougher, pixel-scale shifts
+        pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
+        pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
 
-        for i in range(-half_y_len, half_y_len + 1):
-            ax.axhline(i * pix_len + pix_len/2,
-                       c='k', alpha=.5, ls=':', lw=1)
+        # get amounts by which to shift the actual image arrays
+        integer_shifts_ref = np.round(ideal_shifts_ref / pix_len).astype(int)
+        integer_shifts_sci = np.round(ideal_shifts_sci / pix_len).astype(int)
+        tot_shifts = np.concatenate((integer_shifts_ref, integer_shifts_sci))
 
-        for i in range(-half_x_len, half_x_len + 1):
-            ax.axvline(i * pix_len + pix_len/2,
-                       c='k', alpha=.5, ls=':', lw=1)
+        # pad images, shift so star locations are as close to (0, 0) as possible
+        padded_cubes = self._pad_and_shift_cubes(cube_imgs, tot_shifts)
 
-        #plt.plot(0, 0, '+', c='lightsalmon', mew=5, markersize=5**2,
-        #         zorder=-10, label='center')
+        for i, cube in enumerate(padded_list):
+            cube.data = padded_cubes[i]
 
-        # plot randomly drawn pointings
-        plt.scatter(self.draws_ref[:,0], self.draws_ref[:,1],
-                    c='#ce1141', label='reference set pointings')
-        plt.scatter(self.draws_sci[:,0], self.draws_sci[:,1],
-                    c='#13274f', label='target set pointings')
-        plt.scatter(self.positions[:,0], self.positions[:,1],
-                    marker='+', c='k', s=14**2, zorder=-5,
-                    label='intended (error-free) pointings')
+            # update target star location info to account for padding/shifts
+            if i >= len(self.positions):
+                cube.header['PIXSTARY'] += 1 - tot_shifts[i][1]
+                cube.header['PIXSTARX'] += 1 - tot_shifts[i][0]
 
-        ax.set_xlim(-half_x_len * pix_len, half_x_len * pix_len)
-        ax.set_ylim(-half_y_len * pix_len, half_y_len * pix_len)
+        return padded_list
 
-        ax.set_xlabel('arcesconds', fontsize=14)
-        ax.set_ylabel('arcesconds', fontsize=14)
-        ax.set_title('star locations in original pointings', fontsize=14)
-        ax.legend(fontsize=14)
-
-        if return_plot:
-            return fig
-
-        if dir_name:
-            plt.savefig(dir_name
-                        + ('/' if not dir_name.endswith('/') else '')
-                        + 'original_pointings.png', dpi=300,
-                        bbox_extra_artists=(leg,), bbox_inches='tight')
-
-        plt.show()
-
-    def _find_fine_shifts(self, target_image):
+    def _finalize_emp2_cubes(self, cube_list, verbose=True):
         '''
+        Slices out any outer rows/columns containing NaNs from an HDUList of
+        padded data cubes that went through the 'empirical2' alignment process.
+        Adapted from former `self._get_best_pixels()` method.
+
+        Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.
+        '''
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n', end='')
+        my_pr = lambda txt: print_ast(txt) if verbose else None
+        my_pr('removing padding from alignment process...')
+
+        cube_list = self._pklcopy(cube_list)
+        all_imgs = np.array([cb.data for cb in cube_list])
+
+        # slice each image down to pixels that are non-NaN in every image
+        is_pix_finite = np.isfinite(all_imgs).sum(axis=(0,1))
+        finite_inds = np.argwhere(is_pix_finite == is_pix_finite.max()).T
+        good_pix = np.stack((finite_inds.min(axis=1),
+                             finite_inds.max(axis=1) + 1), axis=1)
+
+        final_imgs = all_imgs[:, :,
+                              good_pix[0, 0] : good_pix[0, 1],
+                              good_pix[1, 0] : good_pix[1, 1]]
+
+        # update cube_list with the finalized data cubes
+        for i, cube in enumerate(cube_list):
+            cube.data = final_imgs[i]
+
+            # update target star location info after adjusting image shape
+            if i >= len(self.positions):
+                cube.header['PIXSTARY'] += -good_pix[0, 0]
+                cube.header['PIXSTARX'] += -good_pix[1, 0]
+
+        return cube_list
+
+    def _finalize_theo_cubes(self, cube_list, verbose=True):
+        '''
+        Completes the theoretical alignment process on argument `cube_list` (a
+        padded HDUList) and slices images to remove NaNs. It returns the edited
+        HDUList along with two lists that are necessary due to intricacies of
+        the theoretical alignment process.
+
+        (Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.)
+
+        For each target cube, the references are "fine-adjusted" so their star
+        locations are as close to the pertinent target's as possible. (You can
+        visualize the process by calling `self.plot_shifted_pointings()`.)
+
+        Although the adjustments on an axis (x/y) are never more than a pixel
+        in either direction, this process can lead to as many distinct
+        combinations of references as there are target observations. These
+        differences also mean that different sets will have different shapes.
+
+        Instead of making an HDUList for each target + reference combination,
+        the method saves the shifted references and sliced targets in separate
+        lists and returns them as the edited version of the HDUList passed
+        in as `cube_list`.
+        '''
+        print_ast = lambda text: print('\n********',
+                                       text,
+                                       '********', sep='\n', end='')
+        my_pr = lambda txt: print_ast(txt) if verbose else None
+        my_pr('fine-adjusting a set of reference cubes to each target cube...')
+
+        cube_list = self._pklcopy(cube_list)
+        ruff_ref_imgs = np.array([cb.data for cb
+                                 in cube_list[:len(self.positions)]])
+        ruff_tgt_imgs = np.array([cb.data for cb
+                                 in cube_list[len(self.positions):]])
+
+        # fine-adjust references to each target image
+        fine_tgt_cubes = []
+        fine_ref_cubes = []
+        for im in range(ruff_tgt_imgs.shape[0]): # number of target images
+            # merge references and pertinent target into one array
+            refs_and_tgt = np.concatenate((ruff_ref_imgs,
+                                           ruff_tgt_imgs[im][np.newaxis]))
+
+            # what pixel shifts of ref images bring them closest to target's
+            # star location? (should be 1 pixel or less in either direction)
+            ref_img_shifts = self._find_fine_shifts(im, arcsec_scale=False)
+
+            # remove padding from all cubes; make shifts in ref cubes
+            aligned_cubes = self._fine_shift_theo_cubes(refs_and_tgt,
+                                                        ref_img_shifts)
+            # returns a 4D array of ref AND sci images
+
+            # slice each image down to pixels that are non-NaN in every image
+            is_pix_finite = np.isfinite(aligned_cubes).sum(axis=(0,1))
+            finite_inds = np.argwhere(is_pix_finite == is_pix_finite.max()).T
+            good_pix = np.stack((finite_inds.min(axis=1),
+                                 finite_inds.max(axis=1) + 1), axis=1)
+
+            final_cubes = aligned_cubes[:, :,
+                                        good_pix[0, 0] : good_pix[0, 1],
+                                        good_pix[1, 0] : good_pix[1, 1]]
+
+            # update target data & header (star loc.) after adjusting img shape
+            # (accounts for extra row/col added in _align_brights_theoretical)
+            pad_ind = im + len(self.positions)
+            cube_list[pad_ind].data = final_cubes[-1]
+            cube_list[pad_ind].header['PIXSTARY'] += -1 - good_pix[0, 0]
+            cube_list[pad_ind].header['PIXSTARX'] += -1 - good_pix[1, 0]
+
+            # save sliced target and its fine adjusted reference images
+            fine_ref_cubes.append(final_cubes[:-1])
+
+        # remove the buffer NaN rows/columns from cube_list's reference cubes
+        for cube in cube_list[:len(self.positions)]:
+            cube.data = cube.data[:, 1:-1, 1:-1]
+
+        return cube_list, fine_ref_cubes
+
+    def _fine_shift_theo_cubes(self, cube_imgs, ref_shifts):
+        '''
+        Called from `self._finalize_theo_cubes()`; meant for data cubes that
+        are going through the fine alignment process
+        (`align_style='theoretical'`) and were first padded in
+        `self._pad_and_shift_cubes()` only.
+
+        Removes padding from all cubes and performs the final, "fine" shift on
+        reference cubes.
+
+        Argument `cube_imgs` is a 4D array made from an HDUList of all
+        reference cubes and one target cube.
+
+        Argument `ref_shifts` is a 2D array containing the fine shifts that
+        will be made to images in the reference cubes. (The target will not be
+        shifted.)
+        '''
+        # compare padded/unpadded images to find how much padding was added
+        sample_pad_img = cube_imgs[0][0]
+        sample_orig_img = self.data_cubes[0].data[0] # an original input image
+
+        # new images will go back to the original, unpadded shape
+        shift_imgs = np.zeros((cube_imgs.shape[0:2] + sample_orig_img.shape))
+
+        # (pad amounts are the same in all cubes after _pad_and_shift_cubes(),
+        #  and both ends of y axis are padded by the same amount; same for x)
+        pad_y = (sample_pad_img.shape[0] - sample_orig_img.shape[0]) // 2
+        pad_x = (sample_pad_img.shape[1] - sample_orig_img.shape[1]) // 2
+
+        # slice all cubes to orig. shape & shift ref cubes by prescribed amounts
+        # (resulting cubes may still include NaNs; they'll be removed later)
+        for i, cube in enumerate(cube_imgs):
+            if i < len(self.positions):
+                y_ind0 = pad_y + ref_shifts[i][1]
+                y_ind1 = -pad_y + ref_shifts[i][1]
+                y_ind1 = None if y_ind1 == 0 else y_ind1
+
+                x_ind0 = pad_x + ref_shifts[i][0]
+                x_ind1 = -pad_x + ref_shifts[i][0]
+                x_ind1 = None if x_ind1 == 0 else x_ind1
+            else: # no shifting necessary for target; only remove padding
+                y_ind0 = pad_y; y_ind1 = -pad_y
+                x_ind0 = pad_x; x_ind1 = -pad_x
+
+            shift_imgs[i] = cube[:, y_ind0 : y_ind1, x_ind0 : x_ind1]
+            # note flipped axes
+
+        return shift_imgs
+
+    def _find_fine_shifts(self, target_image, arcsec_scale=True):
+        '''
+        (Should only be used when align_style='theoretical'.)
+
         After bringing the pointings' star locations as close to (0, 0) for all
         images and a specific target image (specified by an integer in argument
         `target_image`), find out whether there are pixel-scale shifts that
         could bring the former closer to the latter.
 
-        This method returns two arrays with x/y shift information to be applied
-        to the reference cubes. `fine_aligned_refs` gives the shifts in
-        arcseconds (useful for plotting in `self.plot_shifted_pointings()`,
-        while `int_aligned_refs` gives the shifts in pixels (useful in
-        `self._finalize_theo_cubes()`).
+        Argument `arcsec_scale` is a boolean that controls the scale of the
+        returned array of x/y shift information to be applied to the reference
+        cubes. If True, the shifts are given in arcseconds (as in
+        `self.plot_shifted_pointings()`). If False, the shifts are given in
+        pixels (as in `self._finalize_theo_cubes()`; the conversion uses the
+        NIRSpec IFU's pixel size of .1 x .1 arcseconds).
         '''
         pix_len = .1
 
@@ -522,103 +446,10 @@ class AlignImages:
         fine_aligned_refs[residual_ref_offsets > pix_len / 2] -= pix_len
         fine_aligned_refs[residual_ref_offsets < -pix_len / 2] += pix_len
 
-        # get an array of the resulting shifts as integers
+        # get an array of the resulting shifts as integers (pixel scale)
         int_aligned_refs = np.round(fine_aligned_refs / pix_len).astype(int)
 
-        return fine_aligned_refs, int_aligned_refs
-
-    def plot_shifted_pointings(self, dir_name='', return_plot=False):
-        '''
-        **(Note that this method is only a valid representation of the alignment
-        process if you initiated KlipRetrieve() with
-        `align_style='theoretical'` -- the empirical alignment strategies work
-        differently.)**
-
-        View a suite of plots of the shifted stellar positions of each image in
-        the reference and target sets. Initially, both sets are shifted to come
-        as close to (0, 0) as possible, then the reference set is shifted once
-        more to come as close to the target set as possible.
-
-        Use the `dir_name` argument to specify a location for the plot if you'd
-        like to save it. If `return_plot` is True, this method will return the
-        plot as output without saving anything to disk (even if you specified a
-        path for `dir_name`).
-
-        The positions in this plot are driven by the dither positions specified
-        in KlipCreate (`self.positions`), overall pointing error
-        (`self.point_err_ax`), and (minimally) jitter in the dither pointings
-        (`self.dith_err_ax`). The method also plots what the pointings would
-        look like if they were error-free.
-        '''
-        pix_len = .1
-
-        # shifts that would align everything, if you could make subpixel moves
-        # (accounts for initial pointing offset, but not fine pointing jitter)
-        ideal_shifts_ref = self.positions + self.point_err_ax[0]
-        ideal_shifts_sci = self.positions + self.point_err_ax[1]
-
-        # how do those translate to more rough, pixel-scale shifts?
-        pixel_shifts_ref = np.round(ideal_shifts_ref, 1)
-        pixel_shifts_sci = np.round(ideal_shifts_sci, 1)
-
-        # perform the pixel-scale shifts on both sets of images
-        rough_aligned_sci = self.draws_sci - pixel_shifts_sci
-        rough_aligned_ref = self.draws_ref - pixel_shifts_ref
-
-        # make subplots to feature each target image's star along with the
-        # adjustments made to bring the references as close as possible to them
-        fig, axs = plt.subplots(2,5, figsize=(15, 10))
-        plt.gca().set_aspect('equal')
-
-        for i, row in enumerate(axs):
-            for j, ax in enumerate(row):
-                img = len(row) * i + j
-                fine_aligned_ref = self._find_fine_shifts(img)[0]
-
-                # plot this iteration's target star location
-                ax.scatter(rough_aligned_sci[:,0][img],
-                           rough_aligned_sci[:,1][img],
-                           marker='X', s=15**2, color='#ce1141',
-                           label='target image star location')
-
-                # plot before and after of reference fine align process
-                ax.scatter(rough_aligned_ref[:,0], rough_aligned_ref[:,1],
-                           marker='D', edgecolors='#008ca8', s=10**2,
-                           lw=3, facecolor='w', alpha=.4,
-                           label='reference image star location (rough)')
-                ax.scatter((rough_aligned_ref + fine_aligned_ref)[:,0],
-                           (rough_aligned_ref + fine_aligned_ref)[:,1],
-                           c='#13274f',
-                           label='reference image star location (fine)')
-
-                # draw the center pixel in the field of view
-                ax.axhline(-pix_len / 2, color='k', alpha=.5)
-                ax.axhline(pix_len / 2, color='k', alpha=.5)
-                ax.axvline(-pix_len / 2, color='k', alpha=.5)
-                ax.axvline(pix_len / 2, color='k', alpha=.5)
-
-                ax.set_title(f"target image {img}", fontsize=14)
-                ax.set_aspect('equal')
-                ax.plot(0, 0, marker='+', color='k')
-                ax.set_xlim(-pix_len * 2.5/2, pix_len * 2.5/2)
-                ax.set_ylim(-pix_len * 2.5/2, pix_len * 2.5/2)
-
-                handles, labels = ax.get_legend_handles_labels()
-
-        axs[0, 0].set_xlabel('arcesconds', fontsize=14)
-        axs[0, 0].set_ylabel('arcesconds', fontsize=14)
-
-        fig.suptitle('star locations in shifted pointings, theoretical case',
-                     y= .88, fontsize=20)
-        fig.legend(handles, labels, loc='center', fontsize=14)
-
-        if return_plot:
-            return fig
-
-        if dir_name:
-            plt.savefig(dir_name
-                        + ('/' if not dir_name.endswith('/') else '')
-                        + 'shifted_pointings.png', dpi=300,
-                        bbox_extra_artists=(leg,), bbox_inches='tight')
-
-        plt.show()
+        if arcsec_scale:
+            return fine_aligned_refs
+        else:
+            return int_aligned_refs
