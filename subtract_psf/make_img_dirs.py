@@ -6,7 +6,7 @@ import pickle
 import sys
 
 from astropy.io import fits
-from _create_images import CreateImages
+from .create_images import CreateImages
 
 # toy examples
 # ./make_img_dirs.py -n ''

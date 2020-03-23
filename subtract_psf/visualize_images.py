@@ -3,7 +3,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from astropy.visualization import ImageNormalize, SinhStretch
-from my_warnings import warnings
+from .my_warnings import warnings
 
 
 class VisualizeImages:

@@ -7,8 +7,8 @@ from astropy import units as u
 from astropy.constants import codata2014 as const
 from astropy.modeling.blackbody import blackbody_lambda
 from functools import reduce
-from inject_images import InjectCompanion
-from my_warnings import warnings
+from .inject_images import InjectCompanion
+from .my_warnings import warnings
 
 
 class SubtractImages(InjectCompanion):

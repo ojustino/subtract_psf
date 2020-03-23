@@ -4,11 +4,11 @@ import os
 import pickle
 
 from astropy.io import fits
-from align_images import AlignImages
-from my_warnings import warnings
-from inject_images import InjectCompanion
-from subtract_images import SubtractImages
-from visualize_images import VisualizeImages
+from .align_images import AlignImages
+from .inject_images import InjectCompanion
+from .my_warnings import warnings
+from .subtract_images import SubtractImages
+from .visualize_images import VisualizeImages
 
 
 KR_INJECT_DOCSTR = ('''

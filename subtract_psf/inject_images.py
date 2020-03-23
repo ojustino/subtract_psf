@@ -3,7 +3,7 @@ import numpy as np
 
 from astropy.table import Table
 from astropy import units as u
-from my_warnings import warnings
+from .my_warnings import warnings
 
 
 class InjectCompanion:
