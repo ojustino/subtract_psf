@@ -153,18 +153,24 @@ class ReadKlipDirectoryBase:
                 query = ''
             raise ValueError('Some images are missing.' + query)
 
-        # for 'empirical2'-aligned data cubes, check if all have the same shape
-        if (len(np.unique([cb.shape for i in cube_list], axis=0)) != 1
-            and self.align_style == 'empirical2'):
-            warnings.warn('Not all data cubes in this list have the same '
-                          'shape. Is that intentional? You will have problems '
-                          'using KlipRetrieve with this new directory.')
+        # check alignment style (will not exist if called from PreInjectImages)
+        try:
+            align_style = self.align_style
+        except AttributeError:
+            align_style = None
+
         # for 'theoretical'-aligned data cubes, check that all refs have
         # the same shape (targets can vary, so their shapes don't tell much)
-        elif (len(np.unique([cb.shape for i in cube_list[:len(self.positions)]],
-                            axis=0)) != 1
-              and self.align_style == 'theoretical'):
+        if (len(np.unique([cb.shape for cb in cube_list[:len(self.positions)]],
+                          axis=0)) != 1
+            and align_style == 'theoretical'):
             warnings.warn('Not all reference cubes in this list have the same '
+                          'shape. Is that intentional? You will have problems '
+                          'using KlipRetrieve with this new directory.')
+        # for others ('empirical2' and None), check if all have the same shape
+        elif (len(np.unique([cb.shape for cb in cube_list], axis=0)) != 1
+              and align_style == 'empirical2'):
+            warnings.warn('Not all data cubes in this list have the same '
                           'shape. Is that intentional? You will have problems '
                           'using KlipRetrieve with this new directory.')
 
@@ -298,7 +304,8 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages,
 
         # calc. HDULists of assorted contrast/separation data at all wavelengths
         (self.pre_prof_hdu, self.post_prof_hdu, self.photon_prof_hdu,
-         self.pre_avg_hdu) = self._generate_contrasts(self.stackable_cubes)
+         self.pre_avg_hdu) = self._generate_contrasts(self.stackable_cubes,
+                                                      verbose=verbose)
 
         # if cubes weren't pre-injected, inject a companion in the target images
         if not hasattr(self, '_derivative') and align_style != 'theoretical':
@@ -318,7 +325,8 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages,
 class PreInjectImages(ReadKlipDirectoryBase, InjectCompanion):
     # inheritance order matters
     '''
-    Inject a companion into a directory's worth of data cubes.
+    Functionality to help inject a companion into a CreateImages()-created
+    directory's data cubes.
 
     This class is distinct from KlipRetrieve because the injection happens
     *before* the images are aligned, KLIP projected, or subtracted. In fact,

@@ -203,9 +203,7 @@ class InjectCompanion:
         '''
         # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
 
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n', end='')
+        print_ast = lambda text: print('********', text, '********', sep='\n')
         my_pr = lambda txt: print_ast(txt) if verbose else None
 
         # find which child of this class is calling the method

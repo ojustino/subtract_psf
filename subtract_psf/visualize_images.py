@@ -231,9 +231,7 @@ class VisualizeImages:
         4. Examples of these objects can be found in astropy's ImageNormalize
         and matplotlib's colors classes.
         '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n', end='')
+        print_ast = lambda text: print('\n********', text, '********', sep='\n')
 
         # get star's location
         tgt_cubes = self.stackable_cubes[len(self.positions):]
@@ -426,9 +424,7 @@ class VisualizeImages:
         Finally, users can return the plot (`return_plot=True`) or save it to
         disk (`dir_name=PATH/TO/DIR`), but not both.
         '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n', end='')
+        print_ast = lambda text: print('\n********', text, '********', sep='\n')
 
         # set up default plotting case (show low, mid, and hi wavelengths)
         num_wv = len(self.wvlnths)

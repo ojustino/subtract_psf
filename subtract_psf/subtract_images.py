@@ -179,9 +179,7 @@ class SubtractImages(InjectCompanion):
         Argument `verbose` is a boolean that, when True, allows the method to
         print progress messages.
         '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n')
+        print_ast = lambda text: print('\n********', text, '********', sep='\n')
         my_pr = lambda txt, **kwargs: (print_ast(txt, **kwargs)
                                        if verbose else None)
         my_pr('generating KLIP projections of target images '
@@ -237,9 +235,7 @@ class SubtractImages(InjectCompanion):
         Argument `verbose` is a boolean that, when True, allows the method to
         print progress messages.
         '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n', end='')
+        print_ast = lambda text: print('\n********', text, '********', sep='\n')
         my_pr = lambda txt: print_ast(txt) if verbose else None
         my_pr('generating KLIP projections of target images '
               'in `self.klip_proj`...')
@@ -268,7 +264,6 @@ class SubtractImages(InjectCompanion):
                 # save the result as a slice of this projected target image
                 klip_proj[im].data[sl] = ref_klip
 
-        #print(klip_proj.info(), self.stackable_cubes[10:].info())
         return klip_proj
 
     def _generate_contrasts(self, cube_list, verbose=True):
@@ -298,9 +293,7 @@ class SubtractImages(InjectCompanion):
         the stack matches the number of wavelength slices available in
         self.stackable_cubes.
         '''
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n', end='')
+        print_ast = lambda text: print('********', text, '********', sep='\n')
         my_pr = lambda txt: print_ast(txt) if verbose else None
         my_pr('generating pre-/post-subtraction contrast curves...')
 
