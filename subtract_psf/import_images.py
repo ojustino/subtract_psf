@@ -1,12 +1,14 @@
+#!/usr/bin/env python3
 import numpy as np
 import os
 import pickle
-import warnings
 
 from astropy.io import fits
-from align_images import AlignImages
-from inject_images import InjectCompanion
-from subtract_images import SubtractImages
+from .align_images import AlignImages
+from .inject_images import InjectCompanion
+from .my_warnings import warnings
+from .subtract_images import SubtractImages
+from .visualize_images import VisualizeImages
 
 
 KR_INJECT_DOCSTR = ('''
@@ -47,7 +49,10 @@ class ReadKlipDirectoryBase:
         self.terminal_call = self._get_og_call(self.dir_name)
 
         # retrieve data cubes from indicated directory
-        self.data_cubes = self._retrieve_data_cubes(dir_name)
+        data_cubes = self._retrieve_data_cubes(dir_name)
+
+        # add stellar location information to headers of target data cubes
+        self.data_cubes = self._locate_target_stars(data_cubes)
 
     def _pklcopy(self, obj):
         '''
@@ -99,14 +104,47 @@ class ReadKlipDirectoryBase:
 
         return data_cubes
 
-    def export_to_new_dir(self, cube_list, new_dir_name):
+    def _locate_target_stars(self, cube_list):
+        '''
+        Label the target star locations in `self.data_cubes` so it can be
+        tracked through the alignment process, and not take up space in the
+        `self._generate_contrasts()` loop.
+        '''
+        cube_list = self._pklcopy(cube_list)
+        pix_len = .1
+
+        # translate arcsecond coordinates to pixel coordinates based on the size
+        # of images in the data cubes' slices
+        pix_center = [(size - 1) / 2 for size
+                      in cube_list[-1].shape[-2:]]
+        # first index of cube_list doesn't matter
+
+        star_locs = pix_center + self.draws_sci[:, ::-1] / pix_len
+        # img_center is y, x and draws_* is x, y; one of them had to be flipped
+
+        # update target data cubes with their corresponding star location info
+        for im, cube in enumerate(cube_list[len(self.positions):]):
+            # should ref cubes have PIXSTARY?
+            cube.header['PIXSTARY'] = (star_locs[im, 0], 'brightest pixel in '
+                                       f"TARGET{im}, Y direction")
+            cube.header['PIXSTARX'] = (star_locs[im, 1], 'brightest pixel in '
+                                       f"TARGET{im}, X direction")
+
+        return cube_list
+
+    def export_to_new_dir(self, cube_list, new_dir_name, overwrite=False):
         '''
         Create a new directory of data cubes that are still usable by
-        KlipRetrieve. `new_dir_name` is the path to your desired directory, and
-        `cube_list` is the HDUList that will be saved, extension-by-extension.
+        KlipRetrieve.
 
-        A typical use of this method is to save `self.injected_cubes` after
-        injecting a companion in `self.data_cubes` or `self.stackable_cubes`.
+        Argument `cube_list` is the HDUList that will be saved, extension-by-
+        extension.
+
+        Argument `new_dir_name` is the string path to your desired directory.
+
+        Argument `overwrite` is a boolean that controls whether or not the
+        method is allowed to overwrite an existing directory whose path matches
+        `new_dir_name`.
         '''
         # check if all observations are present
         if len(cube_list) != len(self.positions) * 2:
@@ -120,15 +158,29 @@ class ReadKlipDirectoryBase:
                 query = ''
             raise ValueError('Some images are missing.' + query)
 
-        # check if all data cubes have the same shape
-        if len(np.unique([cube_list[i].shape for i in range(len(cube_list))],
-                         axis=0)) != 1:
+        # check alignment style (will not exist if called from PreInjectImages)
+        try:
+            align_style = self.align_style
+        except AttributeError:
+            align_style = None
+
+        # for 'theoretical'-aligned data cubes, check that all refs have
+        # the same shape (targets can vary, so their shapes don't tell much)
+        if (len(np.unique([cb.shape for cb in cube_list[:len(self.positions)]],
+                          axis=0)) != 1
+            and align_style == 'theoretical'):
+            warnings.warn('Not all reference cubes in this list have the same '
+                          'shape. Is that intentional? You will have problems '
+                          'using KlipRetrieve with this new directory.')
+        # for others ('empirical2' and None), check if all have the same shape
+        elif (len(np.unique([cb.shape for cb in cube_list], axis=0)) != 1
+              and align_style == 'empirical2'):
             warnings.warn('Not all data cubes in this list have the same '
                           'shape. Is that intentional? You will have problems '
                           'using KlipRetrieve with this new directory.')
 
         # create the new directory
-        os.mkdir(new_dir_name)
+        os.makedirs(new_dir_name, exist_ok=overwrite)
 
         # save the FITS files
         new_dir_name += ('/' if not new_dir_name.endswith('/') else '')
@@ -136,8 +188,9 @@ class ReadKlipDirectoryBase:
         for i in range(len(cube_list)):
             fits.writeto(new_dir_name +
                          f"{'ref' if i < len(self.positions) else 'sci'}"
-                         f"_image{i % 10}.fits",
-                         cube_list[i].data, cube_list[i].header)
+                         f"_image{i % len(self.positions)}.fits",
+                         cube_list[i].data, cube_list[i].header,
+                         overwrite=overwrite)
 
         # save attrs.pkl, adding a new attribute to signify that this new
         # directory is a derivative of a KlipRetrieve instance
@@ -153,46 +206,37 @@ class ReadKlipDirectoryBase:
         with open(new_dir_name + 'original_call.pkl', 'wb') as file:
             pickle.dump(call, file)
 
-    def _locate_target_stars(self, cube_list):
+    def export_subtracted_cubes(self, new_dir_name, overwrite=False):
         '''
-        Label the target star locations in `self.data_cubes` so it can be
-        tracked through the alignment process, and not take up space in the
-        `self._generate_contrasts()` loop. UNDER EXAMINATION.
+        A convenience function for exporting `self.subtracted_cubes`, an
+        HDUList of injected and then subtracted data cubes, to a new,
+        KlipRetrieve() compatible directory. (`self.stackable_cubes` is made of
+        the reference cubes from `self.stackable_cubes` and the difference
+        between the target cubes in `self.injected_cubes` and
+        `self.stackable_cubes`.)
+
+        Argument `new_dir_name` is the string path to your desired directory.
+
+        Argument `overwrite` is a boolean that controls whether or not the
+        method is allowed to overwrite an existing directory whose path matches
+        `new_dir_name`.
         '''
-        cube_list = self._pklcopy(cube_list)
-        pix_len = .1
-
-        # translate arcsecond coordinates to pixel coordinates based on the size
-        # of images in the data cubes' slices
-        pix_center = [(size - 1) / 2 for size
-                      in self.data_cubes[-1].shape[-2:]] # y, x, while draws_sci is x, y
-        #all_draws = np.vstack((self.draws_ref, self.draws_sci)) / pix_len #x, y
-        star_locs = pix_center + self.draws_sci[:, ::-1]
-        # img_center is y, x and draws_* is x, y; one of them had to be flipped
-
-        # update target data cubes with their corresponding star location info
-        for i, cube in enumerate(cube_list[len(self.positions):]):
-            # should ref cubes have PIXSTARY?
-            cube.header['PIXSTARY'] = (star_locs[i, 0], 'brightest pixel in '
-                                       f"TARGET{im}, Y direction")
-            cube.header['PIXSTARX'] = (star_locs[i, 1], 'brightest pixel in '
-                                       f"TARGET{im}, X direction")
-
-        return cube_list
+        self.export_to_new_dir(self.subtracted_cubes, new_dir_name, overwrite)
 
     def _get_og_call(self, dir_name):
         '''
-        Return the original call made in the terminal to generate the data
-        cubes in this class instance.
+        Return the original call to `make_img_dirs.py` made in either
+        `gen_dirs.condor` or the terminal to generate the "observations" in
+        this instance's `self.data_cubes` HDUList.
         '''
-        with open(dir_name
-                  + 'original_call.pkl', 'rb') as file:
+        with open(dir_name + 'original_call.pkl', 'rb') as file:
             call = pickle.load(file)
 
         return call
 
 
-class KlipRetrieve(ReadKlipDirectoryBase, AlignImages, SubtractImages):
+class KlipRetrieve(ReadKlipDirectoryBase, AlignImages,
+                   SubtractImages, VisualizeImages):
     # inheritance order matters
     '''
     Use the KLIP algorithm to perform PSF subtraction on data cubes from a
@@ -214,10 +258,6 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages, SubtractImages):
     KlipRetrieve, look at the output of `type(INSTANCE_NAME).__mro` and call
     `help` on the indices you're curious about.)
 
-    ********
-    QUESTION: Should there be an argument for KlipCreate that indicates how many modes/percentage of variance to explain through KLIP?
-    ********
-
     Arguments:
     ----------
     dir_name : str, required
@@ -234,33 +274,60 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages, SubtractImages):
         images and aren't concerned with PSF subtraction. (default: True)
     '''
 
-    def __init__(self, dir_name, align_style='empirical2', remove_offsets=True):
+    def __init__(self, dir_name, align_style='empirical2',
+                 remove_offsets=True, verbose=True):
         # inherit from parent classes (https://stackoverflow.com/a/50465583)
         super().__init__(dir_name)
         super(ReadKlipDirectoryBase, self).__init__()
         super(AlignImages, self).__init__()
+        super(SubtractImages, self).__init__()
+
+        if verbose:
+            print(f"in {dir_name}...", end='')
 
         # remove dither offsets from data cube images
-        # (also removes pointing error if align_style is not 'empirical2')
-        aligned_cubes = self._remove_offsets(align_style)
-        #self.plot_shifts(self.dir_name)
+        # (also removes pointing error if align_style is 'theoretical')
+        self.align_style = align_style
+        padded_cubes = self._remove_offsets(self.align_style, verbose=verbose)
 
-        # remove aligned_cubes' padding so only non-NaN pixels remain...
-        self.stackable_cubes = self._get_best_pixels(aligned_cubes, False)
-
-        # make KLIP projections of target images in stackable_cubes
-        self.klip_proj = self._generate_klip_proj()
+        # align all images in cubes, then make KLIP projections of the targets
+        if self.align_style == 'empirical2':
+            self.stackable_cubes = self._finalize_emp2_cubes(padded_cubes,
+                                                             verbose=verbose)
+            self.klip_proj = self._generate_klip_proj(self.stackable_cubes,
+                                                      verbose=verbose)
+        elif self.align_style == 'theoretical':
+            (self.stackable_cubes,
+             fine_ref_cubes) = self._finalize_theo_cubes(padded_cubes,
+                                                         verbose=verbose)
+            self.klip_proj = self._generate_theo_klip_proj(self.stackable_cubes,
+                                                           fine_ref_cubes,
+                                                           verbose=verbose)
 
         # calc. HDULists of assorted contrast/separation data at all wavelengths
         (self.pre_prof_hdu, self.post_prof_hdu, self.photon_prof_hdu,
-         self.pre_avg_hdu) = self._generate_contrasts(self.stackable_cubes)
+         self.pre_avg_hdu) = self._generate_contrasts(self.stackable_cubes,
+                                                      verbose=verbose)
 
         # if cubes weren't pre-injected, inject a companion in the target images
-        if not hasattr(self, '_derivative'):
+        if not hasattr(self, '_derivative') and align_style != 'theoretical':
             self.injected_cubes = self.inject_companion(self.stackable_cubes,
-                                                        comp_scale=5)
+                                                        comp_scale=5,
+                                                        verbose=verbose)
+        else:
+            inj_cbs = self._pklcopy(self.stackable_cubes[len(self.positions):])
+            self.injected_cubes = inj_cbs
 
-        # modify docstring for inject_companion() based on inheriting class
+        # create attribute with ref. cubes and injected then subtracted targets
+        ref_list = self._pklcopy(self.stackable_cubes[:len(self.positions)])
+        tgt_list = self._pklcopy(self.injected_cubes)
+
+        for i, cube in enumerate(tgt_list):
+            cube.data -= self.klip_proj[i].data
+
+        self.subtracted_cubes = fits.HDUList(ref_list + tgt_list)
+
+        # modify docstring for self.inject_companion() based on inheriting class
         # (https://stackoverflow.com/a/4835557)
         docstr = self.inject_companion.__func__.__doc__
         self.inject_companion.__func__.__doc__ = KR_INJECT_DOCSTR + docstr
@@ -269,7 +336,8 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages, SubtractImages):
 class PreInjectImages(ReadKlipDirectoryBase, InjectCompanion):
     # inheritance order matters
     '''
-    Inject a companion into a directory's worth of data cubes.
+    Functionality to help inject a companion into a CreateImages()-created
+    directory's data cubes.
 
     This class is distinct from KlipRetrieve because the injection happens
     *before* the images are aligned, KLIP projected, or subtracted. In fact,
@@ -292,7 +360,7 @@ class PreInjectImages(ReadKlipDirectoryBase, InjectCompanion):
         super().__init__(dir_name)
         super(ReadKlipDirectoryBase, self).__init__()
 
-        # modify docstring for inject_companion() based on inheriting class
+        # modify docstring for self.inject_companion() based on inheriting class
         # (https://stackoverflow.com/a/4835557)
         docstr = self.inject_companion.__func__.__doc__
         self.inject_companion.__func__.__doc__ = PII_INJECT_DOCSTR + docstr

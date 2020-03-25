@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
 import numpy as np
-import warnings
 
 from astropy.table import Table
 from astropy import units as u
+from .my_warnings import warnings
+
 
 class InjectCompanion:
     '''
@@ -134,7 +136,7 @@ class InjectCompanion:
 
         # next, exclude pixels too close to the star
         max_safe_y = int(np.min(max_ys)); max_safe_x = int(np.min(max_xs))
-        print('max_safes', max_safe_y, max_safe_x)
+        #print('max_safes', max_safe_y, max_safe_x)
         max_safe_sep = np.round(np.hypot(max_safe_x, max_safe_y))
 
         below_max_y = np.arange(-max_safe_y, max_safe_y + 1).astype(int)
@@ -146,21 +148,21 @@ class InjectCompanion:
         poss_dists_x = np.delete(below_max_x,
                                  np.s_[max_safe_x - st_gap
                                        : max_safe_x + st_gap + 1])
-        print(poss_dists_x)
-        print(poss_dists_y)
+        #print(poss_dists_x)
+        #print(poss_dists_y)
 
         # choose companion x/y distances based on remaining, safe pixels
         dist_y = np.random.choice(poss_dists_y)
         dist_x = np.random.choice(poss_dists_x)
         dist_arc = np.hypot(dist_x * pix_len, dist_y * pix_len)
-        print(max_safe_sep, dist_y, dist_x)
+        #print(max_safe_sep, dist_y, dist_x)
 
         return dist_y, dist_x, dist_arc
 
     def inject_companion(self, cube_list, comp_scale=None, return_fluxes=False,
                          star_spectrum=None, comp_spectrum=None,
                          star_format=None, comp_format=None,
-                         separation=None, position_angle=np.pi/8):
+                         separation=None, position_angle=0, verbose=True):
         '''
         There are two options for scaling. First, argument `comp_scale` is an
         int/float and will make the companion's flux X times the standard
@@ -187,22 +189,22 @@ class InjectCompanion:
 
         Argument `separation` is a float that represents the separation of the
         companion from the star in arcseconds. (Note that the value is rounded
-        to the nearest tenth.) If it is `None`, the method will randomly choose
-        a companion location that's safely in the image's frame.
+        to the nearest tenth of an arcsecond.) If it is `None`, the method will
+        randomly choose a companion location that's safely in the image's frame.
 
-        Finally, argument `position_angle` is the companion's position angle in
-        radians, relative to the star. It only has an effect if you've specified
-        a separation.
+        Argument `position_angle` is a float that represents the companion's
+        position angle in degrees, relative to the star. The default is 0
+        (north). It only has an effect if you've specified a separation.
+
+        Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.
 
         The method will always return the new HDUList of injected data cubes.
-
-        CHANGE plot_subtraction (and perhaps plot_contrast) TO REFLECT NEW PIXCOMPX/Y
         '''
         # gives PSF + PSF_shifted * F_planet/F_star, so star's PSF always ~= 1.
 
-        print_ast = lambda text: print('\n********',
-                                       text,
-                                       '********', sep='\n')
+        print_ast = lambda text: print('********', text, '********', sep='\n')
+        my_pr = lambda txt: print_ast(txt) if verbose else None
 
         # find which child of this class is calling the method
         _is_klip_retrieve = 'KlipRetrieve' in repr(self)
@@ -235,28 +237,25 @@ class InjectCompanion:
         cube_list = self._pklcopy(cube_list)[len(self.positions):]
         tgt_imgs = np.array([cube.data for cube in cube_list])
 
-        # print information about injection process
         msg1 = ('spectrally defined ' if got_spectra
                 else f"(location-specific) {comp_scale:.0f}-sigma ")
         msg2 = (', after alignment' if _is_klip_retrieve
                 else ' into unaligned images')
-        print_ast('injecting companion with ' + msg1 + 'intensity'
-                  + msg2 + '.')
+        my_pr('injecting companion with ' + msg1 + 'intensity' + msg2 + '.')
 
         # II. Translate the companion images
-        print_ast('shifting companion...') # better print message
         if separation is None:
             # randomly generate the companion's x/y separation
             s_y, s_x, separation = self._choose_random_sep(tgt_imgs)
         else:
             pix_len = .1
             pix_sep = np.round(separation / pix_len)
-            theta = position_angle
+            theta = np.deg2rad(position_angle)
 
-            # trigonometrically convert separation magnitude to x/y separations
-            s_y = -np.round(pix_sep * np.sin(theta)).astype(int)
-            # ("up" in y is + on a graph but negative in an array's 0th dim.)
-            s_x = np.round(pix_sep * np.cos(theta)).astype(int)
+            # trigonometrically convert separation magnitude to x/y separations,
+            # using astronomical convention where PA = 0 is north/up
+            s_y = np.round(pix_sep * np.cos(theta)).astype(int)
+            s_x = np.round(pix_sep * -np.sin(theta)).astype(int)
 
         # shift a copy of the star's PSF to the specified companion position
         # (pad doesn't accept negatives, so we must add zeros/slice creatively)
@@ -344,7 +343,7 @@ class InjectCompanion:
         # if an injection has already occurred, replace it with this new one
         if hasattr(self, 'injected_cubes'):
             self.injected_cubes = inj_cubes
-            print_ast('new, injected target images in `self.injected_cubes`.')
+            my_pr('new, injected target images in `self.injected_cubes`.')
 
         # return new cubes (and fluxes, if requested)
         if return_fluxes:

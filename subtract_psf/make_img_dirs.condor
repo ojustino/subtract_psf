@@ -1,0 +1,54 @@
+# make_img_dirs.condor -- using HTCondor, create multiple image directories in parallel
+
+### to run a job through your STScI account:
+### 1) provide arguments on the Arguments line further down in this file
+###    (try ./make_img_dirs.py --help in terminal to see all options)
+### 2) copy this file, make_img_dirs.py, _create_images.py, and tail.sh
+###    to your /user/ directory
+# $ cp make_img_dirs.condor make_img_dirs.py _create_images.py tail.sh /user/YOURUSERNAME
+### 3) create a logs directory in that directory, too
+# $ cd /user/YOURUSERNAME
+# $ mkdir logs/
+### 4) log in to a cluster computer via SSH and navigate to that directory
+# $ ssh YOURUSERNAME@science5@stsci.edu
+# $ cd /user/YOURUSERNAME
+### 5) open a screen session
+# $ screen -S YOURSESSIONNAME
+### 6) submit the job to condor using this file
+# $ condor_submit make_img_dirs.condor
+### you'll see a printout with information about the job, including its number
+### 7) (optional, but helpful) get printouts of the job's progress
+# $ sh tail.sh logs/ JOBNUMBER
+### this starts a process that will end once the job finishes or errors out.
+### if it's an error, try:
+# $ cat logs/*JOBNUMBER*
+### to see more information about what happened.
+### (Ctrl+A, D to exit screen session; screen -r YOURSESSIONNAME to re-enter)
+
+Name                    = make_img_dirs
+Universe                = Vanilla
+Executable              = ./make_img_dirs.py
+#Arguments               = "-n example_images -i 2 -sl 6"
+#Arguments               = "-n _all_slices_4_os -i 5 -sl 3610" # takes a while!
+#Arguments               = "-n 30_slice_4_os -i 10 -os 4 -sl 30 -pterr True"
+#########################
+Arguments               = # see some example Arguments entries above
+#########################
+transfer_input_files    = _create_images.py
+Should_transfer_files   = IF_NEEDED
+When_to_transfer_output = ON_EXIT
+Log                     = logs/$(Name)_$(Cluster).log
+Error                   = logs/$(Name)_$(Cluster)_error.log
+Output                  = logs/$(Name)_$(Cluster).out
+GetEnv                  = True
+# ^ copy current shell env vars for submission (needed to trigger bash)
+Stream_Output           = True
+# ^^ print stdout in terminal instead of returning it after job completion
+Queue
+
+# links that were helpful in this file's creation:
+# http://www.stsci.edu/~jhunk/htcondor/getting_started.html
+# https://research.cs.wisc.edu/htcondor/manual/quickstart.html
+# https://research.cs.wisc.edu/htcondor/manual/v7.6.2/2_6Managing_Job.html
+# https://www.racf.bnl.gov/docs/sw/condor/quickstart
+# https://research.cs.wisc.edu/htcondor/manual/v7.7/condor_submit.html

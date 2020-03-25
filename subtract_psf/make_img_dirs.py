@@ -6,7 +6,7 @@ import pickle
 import sys
 
 from astropy.io import fits
-from klip_create import KlipCreate
+from create_images import CreateImages
 
 # toy examples
 # ./make_img_dirs.py -n ''
@@ -84,9 +84,9 @@ except Exception as err:
 
 # create the directories
 print(args)
-KlipCreate(args.base_name, num_dir=args.iterations,
-           dithers=dithers, pointing_error=args.pnt_err,
-           oversample=args.oversample, temp_slices=args.temp_slices)
+CreateImages(args.base_name, num_dir=args.iterations,
+             dithers=dithers, pointing_error=args.pnt_err,
+             oversample=args.oversample, temp_slices=args.temp_slices)
 
 # For future reference, save a file containing the call made to terminal
 def parent_dir(base_path):
