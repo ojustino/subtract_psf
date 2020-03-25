@@ -214,7 +214,7 @@ class VisualizeImages:
         pre-injected companion, it will show up even if `companion` is False.
 
         Argument `return_plot` is a boolean allows this method to return the
-        matplotlib Figure object the plots are drawn on if True.
+        matplotlib Figure object upon which the plots are drawn if True.
 
         Argument `dir_name` is a string that, if you'd like to save the figure
         to disk, represents the path to your desired save *directory*. The
@@ -393,7 +393,8 @@ class VisualizeImages:
         return img_data.sum(), np.abs(img_data - proj).sum()
 
     def plot_contrasts(self, target_image=0, wv_slices=None, times_sigma=5,
-                       show_radial=True, return_plot=False, dir_name=''):
+                       companion=False, show_radial=True,
+                       return_plot=False, dir_name=''):
         '''
         Reads from the result of self._generate_contrasts() to create
         contrast/separation plots for...
@@ -410,19 +411,31 @@ class VisualizeImages:
         Also prints readout of pre- and post-subtraction contrast at 1 arcsecond
         separation for quick reference.
 
-        As for arguments, `target_image` allows the user to select which target
-        image (from 0 to len(self.positions) - 1) to display.
+        Argument `target_image` allows the user to select which target image
+        (from 0 to len(self.positions) - 1) to display.
 
-        If `wv_slices` is left blank, the lowest, middle, and highest wavelength
-        curves are shown. Otherwise, it should be a list or numpy array of
-        wavelength indices
-        (from 0 to len(self.stackable_cubes[WHICHEVER].data[1]) - 1).
+        If argument `wv_slices` is left blank, the lowest, middle, and highest
+        wavelength curves are shown. Otherwise, it should be a list or numpy
+        array of integer wavelength indices with values between 0 and
+        len(self.wlvnths) - 1).
 
-        `times_sigma` is the amount by which to multiply each curve's standard
-        deviation measurment before plotting it.
+        Argument `times_sigma` is the amount by which to multiply each curve's
+        standard deviation measurment before plotting it.
 
-        Finally, users can return the plot (`return_plot=True`) or save it to
-        disk (`dir_name=PATH/TO/DIR`), but not both.
+        Argument `companion` is a boolean that controls whether to plot a point
+        representing a possible companion's separation and average contrast over
+        the wavelength slices provided. Will cause an error if neither
+        `self.stackable_cubes` nor `self.injected_cubes` has a companion.
+
+        Argument `show_radial` is a boolean that controls whether or not to show
+        curve #4 (for each requested wavelength slice) on the plot.
+
+        Argument `return_plot` is a boolean allows this method to return the
+        matplotlib axes object upon which the plots are drawn if True.
+
+        Argument `dir_name` is a string that, if you'd like to save the figure
+        to disk, represents the path to your desired save *directory*. The
+        filename is chosen automatically based on `target_image`.
         '''
         print_ast = lambda text: print('\n********', text, '********', sep='\n')
 
@@ -492,6 +505,51 @@ class VisualizeImages:
                       f"pre-sub:  {pre_prof[i, 1, np.argmin(np.abs(pre_prof[i, 0] - 1))]:.4e} | "
                       f"post-sub: {post_prof[i,1, np.argmin(np.abs(post_prof[i, 0] - 1))]:.4e}")
 
+        # if asked, plot companion's separation and average contrast info
+        if companion:
+            pix_len = .1
+            try: # if there's a pre-injected companion...
+                inj_img = self.stackable_cubes[-1]
+                # (index doesn't matter as long as it's in the latter half)
+                sep_pix = np.hypot(inj_img.header['PIXCOMPY'],
+                                   inj_img.header['PIXCOMPX'])
+                sep_arc = sep_pix * pix_len
+            except KeyError: # else, use the post-alignment injection
+                try:
+                    inj_img = self.injected_cubes[0]
+                    # (index doesn't matter)
+                    sep_pix = np.hypot(inj_img.header['PIXCOMPY'],
+                                       inj_img.header['PIXCOMPX'])
+                    sep_arc = sep_pix * pix_len
+                except KeyError:
+                    raise ValueError('No companion found in any of your data '
+                                     'cubes. Retry with `companion=False`.')
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                try: # if it's a spectrum-based injection...
+                    wv_conts = np.array([inj_img.header[h]
+                                         for h in inj_img.header
+                                         if h.startswith('CONT')])
+                    cont = wv_conts[wv_slices].mean()
+                except (IndexError, RuntimeWarning):
+                    # else, it's a random injection
+                    pre_prof = self.pre_prof_hdu[target_image].data[wv_slices]
+
+                    pre_prof_mean = pre_prof[:,1].mean(axis=0)
+                    rads = pre_prof[0, 0]
+                    # all profiles should have the same separation array;
+                    # penultimate index shouldn't matter
+                    closest_sep = np.argmin(np.abs(rads - sep_arc))
+
+                    comp_times_sigma = inj_img.header['XSIGMA']
+                    cont = (comp_times_sigma
+                            * pre_prof_mean[closest_sep] / times_sigma)
+
+            ax.plot(sep_arc, cont, 'P', markersize=20, mew=1.5,
+                    markerfacecolor='#d4bd8a', markeredgecolor='k',
+                    label='average companion contrast')
+
         ax.set_xlim(0,)
         ax.set_xlabel('radius (arcseconds)', fontsize=16)
         ax.set_ylabel('contrast', fontsize=16)
@@ -513,7 +571,7 @@ class VisualizeImages:
 
         plt.show()
 
-    def plot_contrasts_avg(self, times_sigma=5, companion=True,
+    def plot_contrasts_avg(self, times_sigma=5, companion=False,
                            return_plot=False, dir_name=''):
         '''
         Reads from `self.pre_prof_hdu` and `self.post_prof_hdu` to create a plot
@@ -527,7 +585,7 @@ class VisualizeImages:
         which to multiply the radial profiles before calculating their
         statistics and plotting them.
 
-        Argument `companion` is a boolean controls whether to plot the
+        Argument `companion` is a boolean that controls whether to plot the
         companion's separation and contrast data using information from the
         header of either `self.stackable_cubes` (for pre-injected companions) or
         `self.injected_cubes`. If no companion was added, set it to False to
@@ -584,17 +642,21 @@ class VisualizeImages:
         if companion:
             pix_len = .1
             try: # if there's a pre-injected companion...
-                sep_pix = np.hypot(self.stackable_cubes[-1].header['PIXCOMPY'],
-                                   self.stackable_cubes[-1].header['PIXCOMPX'])
-                # (index doesn't matter as long as it's in the latter half)
-                sep_arc = sep_pix * pix_len
                 inj_img = self.stackable_cubes[-1]
-            except KeyError: # else, use the post-alignment injection
-                sep_pix = np.hypot(self.injected_cubes[0].header['PIXCOMPY'],
-                                   self.injected_cubes[0].header['PIXCOMPX'])
-                # (index doesn't matter)
+                # (index doesn't matter as long as it's in the latter half)
+                sep_pix = np.hypot(inj_img.header['PIXCOMPY'],
+                                   inj_img.header['PIXCOMPX'])
                 sep_arc = sep_pix * pix_len
-                inj_img = self.injected_cubes[0]
+            except KeyError: # else, use the post-alignment injection
+                try:
+                    inj_img = self.injected_cubes[0]
+                    # (index doesn't matter)
+                    sep_pix = np.hypot(inj_img.header['PIXCOMPY'],
+                                       inj_img.header['PIXCOMPX'])
+                    sep_arc = sep_pix * pix_len
+                except KeyError:
+                    raise ValueError('No companion found in any of your data '
+                                     'cubes. Retry with `companion=False`.')
 
             with warnings.catch_warnings():
                 warnings.filterwarnings('error')
@@ -607,9 +669,9 @@ class VisualizeImages:
                     cont = (comp_times_sigma
                             * pre_prof_tot_mean[closest_sep] / times_sigma)
 
-            plt.plot(sep_arc, cont, 'P', markersize=20, mew=1.5,
-                     markerfacecolor='#d4bd8a', markeredgecolor='k',
-                     label='average companion contrast')
+            ax.plot(sep_arc, cont, 'P', markersize=20, mew=1.5,
+                    markerfacecolor='#d4bd8a', markeredgecolor='k',
+                    label='average companion contrast')
 
         ax.set_xlim(0,)
         ax.set_xlabel('radius (arcseconds)', fontsize=16)
