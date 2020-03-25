@@ -162,7 +162,7 @@ class InjectCompanion:
     def inject_companion(self, cube_list, comp_scale=None, return_fluxes=False,
                          star_spectrum=None, comp_spectrum=None,
                          star_format=None, comp_format=None,
-                         separation=None, position_angle=np.pi/8, verbose=True):
+                         separation=None, position_angle=0, verbose=True):
         '''
         There are two options for scaling. First, argument `comp_scale` is an
         int/float and will make the companion's flux X times the standard
@@ -189,12 +189,12 @@ class InjectCompanion:
 
         Argument `separation` is a float that represents the separation of the
         companion from the star in arcseconds. (Note that the value is rounded
-        to the nearest tenth.) If it is `None`, the method will randomly choose
-        a companion location that's safely in the image's frame.
+        to the nearest tenth of an arcsecond.) If it is `None`, the method will
+        randomly choose a companion location that's safely in the image's frame.
 
-        Argument `position_angle` is the companion's position angle in radians,
-        relative to the star. It only has an effect if you've specified a
-        separation.
+        Argument `position_angle` is a float that represents the companion's
+        position angle in degrees, relative to the star. The default is 0
+        (north). It only has an effect if you've specified a separation.
 
         Argument `verbose` is a boolean that, when True, allows the method to
         print progress messages.
@@ -250,12 +250,12 @@ class InjectCompanion:
         else:
             pix_len = .1
             pix_sep = np.round(separation / pix_len)
-            theta = position_angle
+            theta = np.deg2rad(position_angle)
 
-            # trigonometrically convert separation magnitude to x/y separations
-            s_y = -np.round(pix_sep * np.sin(theta)).astype(int)
-            # ("up" in y is + on a graph but negative in an array's 0th dim.)
-            s_x = np.round(pix_sep * np.cos(theta)).astype(int)
+            # trigonometrically convert separation magnitude to x/y separations,
+            # using astronomical convention where PA = 0 is north/up
+            s_y = np.round(pix_sep * np.cos(theta)).astype(int)
+            s_x = np.round(pix_sep * -np.sin(theta)).astype(int)
 
         # shift a copy of the star's PSF to the specified companion position
         # (pad doesn't accept negatives, so we must add zeros/slice creatively)

@@ -132,14 +132,19 @@ class ReadKlipDirectoryBase:
 
         return cube_list
 
-    def export_to_new_dir(self, cube_list, new_dir_name):
+    def export_to_new_dir(self, cube_list, new_dir_name, overwrite=False):
         '''
         Create a new directory of data cubes that are still usable by
-        KlipRetrieve. `new_dir_name` is the path to your desired directory, and
-        `cube_list` is the HDUList that will be saved, extension-by-extension.
+        KlipRetrieve.
 
-        A typical use of this method is to save `self.injected_cubes` after
-        injecting a companion in `self.data_cubes` or `self.stackable_cubes`.
+        Argument `cube_list` is the HDUList that will be saved, extension-by-
+        extension.
+
+        Argument `new_dir_name` is the string path to your desired directory.
+
+        Argument `overwrite` is a boolean that controls whether or not the
+        method is allowed to overwrite an existing directory whose path matches
+        `new_dir_name`.
         '''
         # check if all observations are present
         if len(cube_list) != len(self.positions) * 2:
@@ -175,7 +180,7 @@ class ReadKlipDirectoryBase:
                           'using KlipRetrieve with this new directory.')
 
         # create the new directory
-        os.mkdir(new_dir_name)
+        os.makedirs(new_dir_name, exist_ok=overwrite)
 
         # save the FITS files
         new_dir_name += ('/' if not new_dir_name.endswith('/') else '')
@@ -183,8 +188,9 @@ class ReadKlipDirectoryBase:
         for i in range(len(cube_list)):
             fits.writeto(new_dir_name +
                          f"{'ref' if i < len(self.positions) else 'sci'}"
-                         f"_image{i % 10}.fits",
-                         cube_list[i].data, cube_list[i].header)
+                         f"_image{i % len(self.positions)}.fits",
+                         cube_list[i].data, cube_list[i].header,
+                         overwrite=overwrite)
 
         # save attrs.pkl, adding a new attribute to signify that this new
         # directory is a derivative of a KlipRetrieve instance
@@ -200,34 +206,30 @@ class ReadKlipDirectoryBase:
         with open(new_dir_name + 'original_call.pkl', 'wb') as file:
             pickle.dump(call, file)
 
-    def export_subtracted_cubes(self, cube_list, new_dir_name):
+    def export_subtracted_cubes(self, new_dir_name, overwrite=False):
         '''
-        A convenience function for quickly subtracting an HDUList of
-        *subtracted* data cubes by its corresponding HDUList of KLIP
-        projections and exporting the result to `new_dir_name`.
+        A convenience function for exporting `self.subtracted_cubes`, an
+        HDUList of injected and then subtracted data cubes, to a new,
+        KlipRetrieve() compatible directory. (`self.stackable_cubes` is made of
+        the reference cubes from `self.stackable_cubes` and the difference
+        between the target cubes in `self.injected_cubes` and
+        `self.stackable_cubes`.)
 
-        `cube_list` should either be `self.stackable_cubes`,
-        `self.injected_cubes`, or an HDUList of your own whose target cubes
-        match the dimensions of those in `self.klip_proj`. The target cubes in
-        `cube_list` are then subtracted by their analogs in `self.klip_proj`,
-        and the result is exported using `self.export_to_new_dir()`.
+        Argument `new_dir_name` is the string path to your desired directory.
+
+        Argument `overwrite` is a boolean that controls whether or not the
+        method is allowed to overwrite an existing directory whose path matches
+        `new_dir_name`.
         '''
-        tgt_list = self._pklcopy(cube_list)[-len(self.positions):]
-        ref_list = self.stackable_cubes[:len(self.positions)]
-
-        for i, cube in enumerate(tgt_list):
-            cube.data -= self.klip_proj[i].data
-
-        merged_list = ref_list + tgt_list
-        self.export_to_new_dir(merged_list, new_dir_name)
+        self.export_to_new_dir(self.subtracted_cubes, new_dir_name, overwrite)
 
     def _get_og_call(self, dir_name):
         '''
-        Return the original call made in the terminal to generate the data
-        cubes in this class instance.
+        Return the original call to `make_img_dirs.py` made in either
+        `gen_dirs.condor` or the terminal to generate the "observations" in
+        this instance's `self.data_cubes` HDUList.
         '''
-        with open(dir_name
-                  + 'original_call.pkl', 'rb') as file:
+        with open(dir_name + 'original_call.pkl', 'rb') as file:
             call = pickle.load(file)
 
         return call
@@ -315,6 +317,15 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages,
         else:
             inj_cbs = self._pklcopy(self.stackable_cubes[len(self.positions):])
             self.injected_cubes = inj_cbs
+
+        # create attribute with ref. cubes and injected then subtracted targets
+        ref_list = self._pklcopy(self.stackable_cubes[:len(self.positions)])
+        tgt_list = self._pklcopy(self.injected_cubes)
+
+        for i, cube in enumerate(tgt_list):
+            cube.data -= self.klip_proj[i].data
+
+        self.subtracted_cubes = fits.HDUList(ref_list + tgt_list)
 
         # modify docstring for self.inject_companion() based on inheriting class
         # (https://stackoverflow.com/a/4835557)

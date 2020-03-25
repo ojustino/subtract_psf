@@ -283,13 +283,15 @@ class VisualizeImages:
         fig, axs = plt.subplots(2, 2, figsize=(15, 15))
         loc = mpl.ticker.MultipleLocator(base=5)
         norm_top = mpl.colors.LogNorm(vmin=1e-5, vmax=1e0)
+        cmap.set_bad(cmap(0))
 
         # panel 1 (target image)
         curr_ax = axs[0, 0]
 
         curr_ax.plot(star_pix_x, star_pix_y,
                      marker='+', color='#1d1160', markersize=4**2, mew=2)
-        panel = curr_ax.imshow(img_data, norm=norm_top, cmap=cmap)
+        panel = curr_ax.imshow(img_data, norm=norm_top,
+                               cmap=cmap, origin='lower')
 
         cbar = fig.colorbar(panel, ax=curr_ax)
         cbar.ax.tick_params(labelsize=16)
@@ -303,14 +305,14 @@ class VisualizeImages:
 
         curr_ax.plot(star_pix_x, star_pix_y,
                      marker='+', color='#1d1160', markersize=4**2, mew=2)
-        panel = curr_ax.imshow(proj, norm=norm_top, cmap=cmap)
+        panel = curr_ax.imshow(proj, norm=norm_top, cmap=cmap, origin='lower')
 
         cbar = fig.colorbar(panel, ax=curr_ax)
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
-        curr_ax.set_title('klipped target', size=22)
+        curr_ax.set_title('reference PSF from KLIP', size=22)
 
         # panel 3 (target image again, different scaling)
         curr_ax = axs[1, 0]
@@ -347,7 +349,8 @@ class VisualizeImages:
             norm_bottom = ImageNormalize(vmin=-1e-4, vmax=5e-4)
 
         norm_bottom = norm_bottom if norm is None else norm
-        panel = curr_ax.imshow(img_data, norm=norm_bottom, cmap=cmap)
+        panel = curr_ax.imshow(img_data, norm=norm_bottom,
+                               cmap=cmap, origin='lower')
 
         cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
@@ -363,14 +366,15 @@ class VisualizeImages:
             curr_ax.plot(comp_pix_x, comp_pix_y,
                          marker='+', color='#008ca8', mew=2)
 
-        panel = curr_ax.imshow(img_data - proj, norm=norm_bottom, cmap=cmap)
+        panel = curr_ax.imshow(img_data - proj, norm=norm_bottom,
+                               cmap=cmap, origin='lower')
 
         cbar = fig.colorbar(panel, ax=curr_ax, format='%.2e')
         cbar.ax.tick_params(labelsize=16)
         curr_ax.tick_params(axis='both', labelsize=15)
         curr_ax.set_xlabel("pixels (.1'' x .1'')", fontsize=16)
         curr_ax.yaxis.set_major_locator(loc)
-        curr_ax.set_title('observed minus klipped', size=22)
+        curr_ax.set_title('observed $\minus$ KLIP reference', size=22)
 
         print_ast(f"total intensity pre-subtract:  {img_data.sum():.4e}\n"
                   f"total intensity post-subtract: {np.abs(img_data - proj).sum():.4e}")
