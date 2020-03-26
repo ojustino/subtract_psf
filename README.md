@@ -3,7 +3,7 @@
 - *can use real spectral data to inject a companion brown dwarf into the target observations*
 - *aligns images and employs KLIP on reference observations to project the PSF of each target's background star*
 - *uses reference star differential imaging to attempt to subtract the background star from each target image*
--*can visualize the results in a Jupyter notebook or export a directory of FITS images for viewing in DS9*
+- *can visualize the results in a Jupyter notebook or export a directory of FITS images for viewing in DS9*
 
 #### To install locally:
 ```
