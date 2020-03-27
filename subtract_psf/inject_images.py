@@ -11,16 +11,27 @@ class InjectCompanion:
     This class is meant to be inherited by a KlipRetrieve() or PreInjectImages()
     class instance, not used individually.
 
-    Contains the key method that performs companion injections and its
-    associated support methods. For more aboput the injection process, see the
-    docstring for `self.inject_companion()`.
+    Contains self.inject_companion(), the key method for injecting a companion
+    into a set of data cubes, and its associated support methods.
+
+    If called from a PreInjectImages() instance on a directory of
+    original "observations" from CreateImages(), the injection will occur
+    without any subsequent alignment or subtraction of images.
+
+    If called from a KlipRetrieve() instance, the injection will take place
+    *after* alignment and subtraction.
     '''
 
     def _check_spectrum(self, arg, format):
         '''
-        Validates a spectrum passed to `self.scale_from_spectra()` based on the
-        conditions described in that method's docstring. If it passes, gets the
-        Table ready for flux binning in `self._get_bin_fluxes()`.
+        Called from `self.inject_companion()`. Validates a spectrum passed to
+        that method based on its docstring. If it passes, gets the Table ready
+        for flux binning in `self._get_bin_fluxes()`.
+
+        Argument `arg` is either an astropy Table or a string file path to one.
+
+        Argument `format` is a string representing the file format used to help
+        astropy's Table.read() method read in the Table if `arg` is a string.
         '''
         if isinstance(arg, str):
             spectrum = Table.read(spectrum, format=format)
@@ -60,9 +71,12 @@ class InjectCompanion:
 
     def _get_bin_fluxes(self, spectrum):
         '''
-        Divides a spectrum Table into bins based on wavelengths in self.wvlnths,
-        calculates the mean flux in each bin, then returns the resulting array
-        of binned flxues.
+        Called from `self.inject_companion()`. Divides a spectrum into bins
+        based on wavelengths in `self.wvlnths`, calculates the mean flux in
+        each bin, then returns the resulting array of binned flxues.
+
+        Argument `spectrum` is an astropy Table that follows the requirements
+        spelled out in the docstring of `self.inject_companion()`.
         '''
         wvln_column = spectrum['wvln'].quantity
         flux_column = spectrum['flux'].quantity
@@ -98,12 +112,15 @@ class InjectCompanion:
     def _choose_random_sep(self, target_images):
         '''
         Called from `self._inject_companion()` if the user didn't specify a
-        companion separation. Calculates separations that will safely remain
-        in-frame for all pointings, then randomly chooses Y and X pixel
-        distances from the set that remains.
+        companion separation.
 
-        Returns those pixel distances along with the resulting distance
-        magnitude in arcseconds.
+        Calculates separations that will safely remain in-frame for all
+        pointings, then randomly chooses Y and X pixel distances from the set
+        that remains. Returns those pixel distances along with the resulting
+        distance magnitude in arcseconds.
+
+        Argument `target_images` is a 4D array of data cubes from each target
+        observation.
         '''
         pix_len = .1
 
@@ -164,11 +181,12 @@ class InjectCompanion:
                          star_format=None, comp_format=None,
                          separation=None, position_angle=0, verbose=True):
         '''
-        There are two options for scaling. First, argument `comp_scale` is an
-        int/float and will make the companion's flux X times the standard
-        deviation of pixel intensity at the specified radial separation from
-        the star in the pre-subtraction image. (Radial profile information comes
-        from `self.pre_prof_hdu`.)
+        There are two options for scaling.
+
+        First, argument `comp_scale` is a float that makes the companion's flux
+        X times the standard deviation of pixel intensity at the specified
+        radial separation from the star in the pre-subtraction image. (Radial
+        profile information comes from `self.pre_prof_hdu`.)
 
         Second, arguments `comp_spectrum` and `star_spectrum` should either be
         astropy Table objects *or* string paths to spectra files that can be
@@ -183,14 +201,15 @@ class InjectCompanion:
             - have flux density units of erg / s / cm**2 / Hz, erg / s / cm**3,
             mJy, or something equivalent.
 
-        To get back the binned spectra, set argument `return_fluxes` to True.
-        The method will then return, in order, the HDUList of injected data
-        cubes, the star's binned spectra, and the companion's binned spectra.
+        Argument `return_fluxes` is a boolean that, if True, makes this method
+        return, in order, the HDUList of injected data cubes, the star's binned
+        spectrum, and the companion's binned spectrum.
 
         Argument `separation` is a float that represents the separation of the
         companion from the star in arcseconds. (Note that the value is rounded
         to the nearest tenth of an arcsecond.) If it is `None`, the method will
-        randomly choose a companion location that's safely in the image's frame.
+        randomly choose a companion location that falls safely in-scene for all
+        observations' data cubes.
 
         Argument `position_angle` is a float that represents the companion's
         position angle in degrees, relative to the star. The default is 0

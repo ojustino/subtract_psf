@@ -3,26 +3,28 @@
 ### to run a job through your STScI account:
 ### 1) provide arguments on the Arguments line further down in this file
 ###    (try ./make_img_dirs.py --help in terminal to see all options)
-### 2) copy this file, make_img_dirs.py, _create_images.py, and tail.sh
+### 2) set make_img_dirs.py as an executable file
+# $ chmod +x make_img_dirs.py
+### 3) copy this file, make_img_dirs.py, create_images.py, and tail.sh
 ###    to your /user/ directory
-# $ cp make_img_dirs.condor make_img_dirs.py _create_images.py tail.sh /user/YOURUSERNAME
-### 3) create a logs directory in that directory, too
+# $ cp make_img_dirs.condor make_img_dirs.py create_images.py tail.sh /user/YOURUSERNAME
+### 4) create a logs directory in that directory, too
 # $ cd /user/YOURUSERNAME
 # $ mkdir logs/
-### 4) log in to a cluster computer via SSH and navigate to that directory
+### 5) log in to a cluster computer via SSH and navigate to that directory
 # $ ssh YOURUSERNAME@science5@stsci.edu
 # $ cd /user/YOURUSERNAME
-### 5) open a screen session
+### 6) open a screen session
 # $ screen -S YOURSESSIONNAME
-### 6) submit the job to condor using this file
+### 7) submit the job to condor using this file
 # $ condor_submit make_img_dirs.condor
 ### you'll see a printout with information about the job, including its number
-### 7) (optional, but helpful) get printouts of the job's progress
+### 8) (optional, but helpful) get printouts of the job's progress
 # $ sh tail.sh logs/ JOBNUMBER
 ### this starts a process that will end once the job finishes or errors out.
 ### if it's an error, try:
 # $ cat logs/*JOBNUMBER*
-### to see more information about what happened.
+### to see more information about what happened:
 ### (Ctrl+A, D to exit screen session; screen -r YOURSESSIONNAME to re-enter)
 
 Name                    = make_img_dirs
@@ -34,7 +36,7 @@ Executable              = ./make_img_dirs.py
 #########################
 Arguments               = # see some example Arguments entries above
 #########################
-transfer_input_files    = _create_images.py
+transfer_input_files    = create_images.py
 Should_transfer_files   = IF_NEEDED
 When_to_transfer_output = ON_EXIT
 Log                     = logs/$(Name)_$(Cluster).log

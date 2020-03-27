@@ -51,8 +51,12 @@ class ReadKlipDirectoryBase:
         # retrieve data cubes from indicated directory
         data_cubes = self._retrieve_data_cubes(dir_name)
 
-        # add stellar location information to headers of target data cubes
-        self.data_cubes = self._locate_target_stars(data_cubes)
+        # if not present, add star location info to headers of target data cubes
+        sample_header = data_cubes[-1].header
+        if ('PIXSTARY' in sample_header) and ('PIXSTARX' in sample_header):
+            self.data_cubes = data_cubes
+        else:
+            self.data_cubes = self._locate_target_stars(data_cubes)
 
     def _pklcopy(self, obj):
         '''
@@ -66,8 +70,11 @@ class ReadKlipDirectoryBase:
 
     def _retrieve_data_cubes(self, dir_name):
         '''
-        Return a list of related data cubes (each list index is a different
-        dither position, each cube is indexed by wavelength)
+        Return a list of related data cubes. Each list index is a different
+        dither position; each cube is indexed by wavelength.
+
+        Argument `dir_name` is the string file path to the directory with the
+        desired FITS files.
         '''
         # import attributes for this set of images
         with open(dir_name + '/attr.pkl', 'rb') as file:
@@ -106,9 +113,12 @@ class ReadKlipDirectoryBase:
 
     def _locate_target_stars(self, cube_list):
         '''
-        Label the target star locations in `self.data_cubes` so it can be
-        tracked through the alignment process, and not take up space in the
-        `self._generate_contrasts()` loop.
+        Add keys to the headers of an HDUList of data cubes with each target
+        extension's background star location. This location is tracked through
+        the alignment process and helps with generating contrasts later on.
+
+        Argument `cube_list` is the HDUList of data cubes that will be
+        traversed. It should typically be `self.data_cubes`.
         '''
         cube_list = self._pklcopy(cube_list)
         pix_len = .1
@@ -210,7 +220,7 @@ class ReadKlipDirectoryBase:
         '''
         A convenience function for exporting `self.subtracted_cubes`, an
         HDUList of injected and then subtracted data cubes, to a new,
-        KlipRetrieve() compatible directory. (`self.stackable_cubes` is made of
+        KlipRetrieve() compatible directory. (`self.subtracted_cubes` is made of
         the reference cubes from `self.stackable_cubes` and the difference
         between the target cubes in `self.injected_cubes` and
         `self.stackable_cubes`.)
@@ -226,7 +236,7 @@ class ReadKlipDirectoryBase:
     def _get_og_call(self, dir_name):
         '''
         Return the original call to `make_img_dirs.py` made in either
-        `gen_dirs.condor` or the terminal to generate the "observations" in
+        `make_img_dirs.condor` or the terminal to generate the "observations" in
         this instance's `self.data_cubes` HDUList.
         '''
         with open(dir_name + 'original_call.pkl', 'rb') as file:
@@ -242,30 +252,35 @@ class KlipRetrieve(ReadKlipDirectoryBase, AlignImages,
     Use the KLIP algorithm to perform PSF subtraction on data cubes from a
     directory created by KlipCreate().
 
-    This class inherits from AlignImages() to get methods that do the work of
-    removing offsets from all data cube images and aligning the reference and
-    target images. (This step requires class attributes created by reading from
-    the `attr.pkl` file, so the data cubes alone are not enough. There also
-    must be an equal number of reference and target images.)
+    This class inherits from ReadKlipDirectoryBase() to read in a directory of
+    "observational" FITS files created by CreateImages() and save the resulting
+    data cubes. (This step requires class attributes created by reading from
+    the `attr.pkl` file, so the FITS files alone are not enough. There also
+    must be an equal number of reference and target image files.)
+
+    It inherits methods from AlignImages() that do the work of removing offsets
+    from all data cube images and aligning the reference and target images.
 
     It also inherits from SubtractImages() to create KLIP bases for the target
     images from the reference images, carry out PSF subtraction in each slice
     of each target image, save the results, and save information about contrast
-    and separation. See self.plot_subtraction() and self.plot_contrasts() for
-    details on how to visualize these results.
+    and separation.
 
-    (To see help for these parent classes when working with an instance of
-    KlipRetrieve, look at the output of `type(INSTANCE_NAME).__mro` and call
-    `help` on the indices you're curious about.)
+    Finally, it inherits methods from VisualizeImages() that plot star
+    locations, subtraction results, and contrast/separation curves.
+
+    (To see help for these parent classes when working with a KlipRetrieve
+    instance, look at the output of `type(INSTANCE_NAME).__mro` and call `help`
+    on any that you're curious about.)
 
     Arguments:
     ----------
     dir_name : str, required
-        The path to your directory of data cubes.
+        The path to your directory of data cubes and associated files.
 
     align_style : str, optional
-        The method to use in aligning the images. Currently 'theoretical',
-        'empirical1', and 'empirical2' (default).
+        The method to use in aligning the images. Either 'empirical2' (default)
+        or 'theoretical'.
 
     remove_offsets : bool, optional
         Whether to remove offsets in data cube images caused by pointing error
@@ -345,10 +360,8 @@ class PreInjectImages(ReadKlipDirectoryBase, InjectCompanion):
 
     Instead, the typical workflow is to inject a companion using
     `self.inject_companion()` and then export the injected data cubes to a new
-    directory with `self.export_to_new_dir()`. (See more about those methods in
-    their inherited docstrings from InjectCompanion and ReadKlipDirectoryBase,
-    respectively.) You would then use KlipRetrieve() on the new directory as
-    normal.
+    directory with `self.export_to_new_dir()`. You would then use KlipRetrieve
+    on the exported directory as normal.
 
     Arguments:
     ----------

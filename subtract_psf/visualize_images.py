@@ -13,10 +13,10 @@ class VisualizeImages:
 
     All of these methods visualize some element of the imported data cubes,
     including their pre- and post-alignment star locations
-    (`self.plot_original_pointings()` and `self.plot_shifted_pointings()`,
-    resp.), their pre- and post-subtraction contrast curves
-    (`self.plot_contrasts()` and `self.plot_contrasts_avg()`), and the results
-    of PSF subtraction (`self.plot_subtraction()`).
+    [self.plot_original_pointings() and self.plot_shifted_pointings(),
+    respectively], their pre- and post-subtraction contrast curves
+    [self.plot_contrasts() and self.plot_contrasts_avg()], and the results
+    of PSF subtraction [self.plot_subtraction()].
     '''
     def __init__(self):
         super().__init__()
@@ -26,16 +26,19 @@ class VisualizeImages:
         View a plot of the original, un-shifted stellar positions of each image
         in the reference and science sets.
 
-        Use the `dir_name` argument to specify a location for the plot if you'd
-        like to save it. If `return_plot` is True, this method will return the
-        plot as output without saving anything to disk (even if you specified a
-        path for `dir_name`).
-
         The positions in this plot are driven by the dither positions specified
         in KlipCreate (`self.positions`), overall pointing error
         (`self.point_err_ax`), and (minimally) jitter in the dither pointings
         (`self.dith_err_ax`). The method also plots what the pointings would
         look like if they were error-free.
+
+        Argument `dir_name` is a string file path to the location in which to
+        save the plot. The filename is chosen automatically.
+
+        Argument `return_plot` is a boolean that allows this method to return
+        the matplotlib axes object upon which the plots are drawn if True. This
+        option overrides `dir_name`, so no file will be saved if `return_plot`
+        is True, even if you specified a path.
         '''
         pix_len = .1
 
@@ -76,7 +79,7 @@ class VisualizeImages:
         ax.legend(fontsize=14)
 
         if return_plot:
-            return fig
+            return ax
 
         if dir_name:
             plt.savefig(dir_name
@@ -88,26 +91,22 @@ class VisualizeImages:
 
     def plot_shifted_pointings(self, dir_name='', return_plot=False):
         '''
-        **(Note that this method is only a valid representation of the alignment
+        Note that this method is only a valid representation of the alignment
         process if you initiated KlipRetrieve() with
-        `align_style='theoretical'` -- the empirical alignment strategies work
-        differently.)**
+        `align_style='theoretical'` -- the empirical strategy works differently.
 
         View a suite of plots of the shifted stellar positions of each image in
         the reference and target sets. Initially, both sets are shifted to come
-        as close to (0, 0) as possible, then the reference set is shifted once
-        more to come as close to the target set as possible.
+        as close to (0, 0) as possible, then the reference sets are shifted once
+        more to come as close to each target as possible.
 
-        Use the `dir_name` argument to specify a location for the plot if you'd
-        like to save it. If `return_plot` is True, this method will return the
-        plot as output without saving anything to disk (even if you specified a
-        path for `dir_name`).
+        Argument `dir_name` is a string file path to the location in which to
+        save the plot. The filename is chosen automatically.
 
-        The positions in this plot are driven by the dither positions specified
-        in KlipCreate (`self.positions`), overall pointing error
-        (`self.point_err_ax`), and (minimally) jitter in the dither pointings
-        (`self.dith_err_ax`). The method also plots what the pointings would
-        look like if they were error-free.
+        Argument `return_plot` is a boolean that allows this method to return
+        the matplotlib Figure object upon which the subplots are drawn if True.
+        This option overrides `dir_name`, so no file will be saved if
+        `return_plot` is True, even if you specified a path.
         '''
         if self.align_style != 'theoretical':
             warnings.warn('This plot does not represent how the alignment '
@@ -201,20 +200,20 @@ class VisualizeImages:
         3) target image; 4) target minus ref. image (same scale for 3 & 4).
 
         Argument `target_image` is an integer representing the pointing from
-        which to get an image. Valid values are 0 to len(`self.positions`) - 1.
+        which to get an image. Valid values are 0 to len(self.positions) - 1.
 
         Argument `wv_slice` is an integer representing the wavelength slice
-        whose image will be shown. Valid values are 0 to len(`self.wvlnths`) -
-        1.
+        whose image will be shown. Valid values are 0 to len(self.wvlnths) - 1.
 
-        Argument `companion` is a boolean. When True, the bottom plots show the
-        effect of the subtraction on companion detection. When False, the
-        bottom plots show the extent of stellar subtraction and are hopefully as
-        close to blank as possible. If the data cubes you provided already had a
-        pre-injected companion, it will show up even if `companion` is False.
+        Argument `companion` is a boolean. When True (default), plots 3 and 4
+        show the effect of the subtraction on companion detection. When False,
+        plots 3 and 4 show the extent of background star subtraction and are
+        hopefully as close to blank as possible. If the data cubes you provided
+        when initializing KlipRetrieve already had a pre-injected companion, it
+        will appear even if `companion` is False.
 
-        Argument `return_plot` is a boolean allows this method to return the
-        matplotlib Figure object upon which the plots are drawn if True.
+        Argument `return_plot` is a boolean that allows this method to return
+        the matplotlib Figure object upon which the subplots are drawn if True.
 
         Argument `dir_name` is a string that, if you'd like to save the figure
         to disk, represents the path to your desired save *directory*. The
@@ -400,46 +399,47 @@ class VisualizeImages:
                        companion=False, show_radial=True,
                        return_plot=False, dir_name=''):
         '''
-        Reads from the result of self._generate_contrasts() to create
-        contrast/separation plots for...
+        Plots contrast/separation curves for...
 
         1. The radial profile(s) of standard deviation for the user-selected
-        wavelength(s) of a chosen target image ("pre-subtraction")
+        wavelength(s) of a chosen target image ("pre-subtraction", from
+        `self.pre_prof_hdu`)
         2. The radial profile(s) of standard deviation for the user-selected
         wavelength(s) of the chosen target image minus its corresponding KLIP
-        projections ("post-subtraction")
+        projections ("post-subtraction", from `self.post_prof_hdu`)
         3. The photon noise (apparently incorrect, so commented out for now)
         4. The radial profile(s) of average pixel values for the user-selected
-        wavelength(s) of the chosen target image. (Display is optional.)
+        wavelength(s) of the chosen target image. (from `self.pre_avg_hdu`)
 
         Also prints readout of pre- and post-subtraction contrast at 1 arcsecond
-        separation for quick reference.
+        separation of curves 1 and 2 for quick reference.
 
-        Argument `target_image` allows the user to select which target image
-        (from 0 to len(self.positions) - 1) to display.
+        Argument `target_image` is an integer that allows the user to select
+        which target image (from 0 to len(self.positions) - 1) to display.
 
         If argument `wv_slices` is left blank, the lowest, middle, and highest
-        wavelength curves are shown. Otherwise, it should be a list or numpy
-        array of integer wavelength indices with values between 0 and
-        len(self.wlvnths) - 1).
+        wavelength curves in the selected data cube are shown. Otherwise, it
+        should be a list or numpy array of integer wavelength indices with
+        values between 0 and len(self.wlvnths) - 1).
 
-        Argument `times_sigma` is the amount by which to multiply each curve's
-        standard deviation measurment before plotting it.
+        Argument `times_sigma` a float representing the amount by which to
+        multiply each curve's standard deviation measurment before plotting it.
 
         Argument `companion` is a boolean that controls whether to plot a point
-        representing a possible companion's separation and average contrast over
-        the wavelength slices provided. Will cause an error if neither
-        `self.stackable_cubes` nor `self.injected_cubes` has a companion.
+        representing an injected companion's separation and average contrast
+        over the wavelength slices selected. The default value is 0. Will cause
+        an error if neither `self.stackable_cubes` nor `self.injected_cubes`
+        has a companion.
 
         Argument `show_radial` is a boolean that controls whether or not to show
         curve #4 (for each requested wavelength slice) on the plot.
 
-        Argument `return_plot` is a boolean allows this method to return the
-        matplotlib axes object upon which the plots are drawn if True.
+        Argument `return_plot` is a boolean that allows this method to return
+        the matplotlib axes object upon which the plots are drawn if True.
 
-        Argument `dir_name` is a string that, if you'd like to save the figure
-        to disk, represents the path to your desired save *directory*. The
-        filename is chosen automatically based on `target_image`.
+        Argument `dir_name` is the string file path to the location in which to
+        save the plot. The filename is chosen automatically based on
+        `target_image`.
         '''
         print_ast = lambda text: print('\n********', text, '********', sep='\n')
 
@@ -578,16 +578,16 @@ class VisualizeImages:
     def plot_contrasts_avg(self, times_sigma=5, companion=False,
                            return_plot=False, dir_name=''):
         '''
-        Reads from `self.pre_prof_hdu` and `self.post_prof_hdu` to create a plot
-        of the mean radial profile of standard deviation (and its 1-sigma
-        envelope) over all images from all pointings, once for pre-subtraction
-        images and again for post-subtraction images. Essentially averages
-        every possible standard deviation curve in both cases from
-        `self.plot_contrasts()` and puts the results into one plot.
+        Creates a plot of the mean radial profile of standard deviation (and
+        its 1-sigma envelope) over all images from all pointings, once for pre-
+        subtraction images (`self.pre_prof_hdu`) and again for post-subtraction
+        images (`self.post_prof_hdu`). Essentially averages every possible
+        standard deviation curve in both cases from `self.plot_contrasts()` and
+        puts the results into one plot.
 
-        Argument `times_sigma` is a float/int that represents the amount by
-        which to multiply the radial profiles before calculating their
-        statistics and plotting them.
+        Argument `times_sigma` is a float that represents the amount by which
+        to multiply the radial profiles before calculating their statistics and
+        plotting them.
 
         Argument `companion` is a boolean that controls whether to plot the
         companion's separation and contrast data using information from the
@@ -595,8 +595,8 @@ class VisualizeImages:
         `self.injected_cubes`. If no companion was added, set it to False to
         avoid an error.
 
-        Argument `return_plot` is a boolean allows this method to return the
-        matplotlib Figure object the plots are drawn on if True.
+        Argument `return_plot` is a boolean that allows this method to return
+        the matplotlib Figure object the plots are drawn on if True.
 
         Argument `dir_name` is a string that, if you'd like to save the figure
         to disk, represents the path to your desired save *directory*. The
