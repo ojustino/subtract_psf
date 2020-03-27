@@ -8,23 +8,23 @@ import sys
 from astropy.io import fits
 from create_images import CreateImages
 
-# toy examples
-# ./make_img_dirs.py -n ''
-# ./make_img_dirs.py -n 'testy' -i 3 -dx '.02 .01 -.01' -dy '.03, .05, .03'
+# toy example with three step dither cycle
+# (make sure you've made this an executable file first)
+# make_img_dirs.py -n 'test_imgs' -i 3 -dx '.02 .01 -.01' -dy '.03, .05, .03'
 
 parser = argparse.ArgumentParser()
 
 # take in a comma/space delimited str, grab the floats, and make an array
 read_as_arr = (lambda arg:
                np.array([float(pos) for pos in arg.split(' ') if len(pos) > 0]
-                        if arg.find(',') < 0 # space delimited
-                        else [float(pos) for pos # comma delimited
+                        if arg.find(',') < 0 # space delimited case
+                        else [float(pos) for pos # comma delimited case
                               in arg.replace(' ','').split(',')]))
 
 # define acceptable arguments for directory creation
 parser.add_argument('-n', '--name',
                     help="base name for the directories you're creating "
-                    "(e.g. base0, base1, etc.) [str]",
+                    "(e.g. 'base' for base0, base1, etc.) [str]",
                     type=str, dest='base_name')
 parser.add_argument('-i', '--iterations',
                     help='the number of directories to create [int, up to 16]',
@@ -43,11 +43,13 @@ parser.add_argument('-pterr', '--pointing_error',
                     type=bool, dest='pnt_err')
 parser.add_argument('-os', '--oversample',
                     help="The factor beyond the detector's pixel count by "
-                    'which to sample the scene [int, default 4]',
+                    'which to sample the scene. Trade precision for faster '
+                    'computation by choosing 1 [int, default 4]',
                     type=int, dest='oversample')
 parser.add_argument('-sl', '--temp_slices',
                     help='The number of slices to include per data cube. '
-                    'Save computation time by choosing 6 [int, default ~1530]',
+                    'Trade precision for faster computation time by choosing '
+                    'a number less than or equal to 6 [int, default 30]',
                     type=int, dest='temp_slices')
 args = parser.parse_args()
 
@@ -77,6 +79,10 @@ try:
     # set default pointing error if not specified by user
     if args.pnt_err is None:
         args.pnt_err = True
+
+    # set default number of slices per data cube if not specified by user
+    if args.temp_slices is None:
+        args.temp_slices = 30
 
 except Exception as err:
     parser.print_help()
@@ -117,7 +123,7 @@ def downsize_fits_headers(dir_name):
     slice in each extension of the output HDUList. For a 2 extension HDUList
     with 3,000 slice data cubes, that's ~200,000 lines. This information isn't
     needed for our purposes and demonstrably slows the loading process in DS9
-    (and potentially KlipRetrieve), so we seek to eliminate it.
+    (and KlipRetrieve), so we seek to eliminate it.
 
     We take advantage of its predictable length, key ('HISTORY') and position
     in the list of headers (last) to slice it out in each HDUList extension and

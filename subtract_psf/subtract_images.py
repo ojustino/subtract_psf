@@ -18,26 +18,23 @@ class SubtractImages(InjectCompanion):
 
     Creates KLIP bases, carries out PSF subtraction, saves the results, and
     also calculates and saves information about contrast and separation in the
-    resulting subtracted images. Allows the user to visualize last two features
-    on a slice-by-slice basis.
+    resulting subtracted images.
 
     The key methods that handle calculation and new object creation are...
         - self._generate_klip_proj(): uses the reference images as a library
         from which to make KLIP projections of each slice of each target image.
-        Its output is an HDUList of these projections.
+        Its output is self.klip_proj, an HDUList of these projections.
+
+            - self._generate_theo_klip_proj() achieves the same result when
+            self.align_style is 'theoretical', though the path is different
+            due to the different structure of reference images in that scenario.
+
         - self._generate_contrasts(): uses the result of the previous method to
         calculate radial profiles for different versions of the target images.
-        Its output is an HDUList with contrast versus separation information
-        for each version of every slice of every target image.
-
-    The key methods for visualizing results are...
-        - self.plot_subtraction(): View a slice of a target image both before
-        and after subtraction to judge the subtraction's effectiveness.
-        - self.plot_contrasts(): View pre and post-subtraction
-        contrast/separation curves for at least one slice of a target image.
-
-    self.best_pixels, self.klip_proj, self.*_hdu all come from the methods
-    mentioned above.
+        It outputs four HDULists -- self.pre_prof_hdu, self.post_prof_hdu,
+        self.photon_prof_hdu, and self.pre_avg_hdu -- with contrast versus
+        separation information for every slice of each target image, before and
+        after subtraction.
     '''
 
     def __init__(self):
@@ -47,15 +44,14 @@ class SubtractImages(InjectCompanion):
                        temp_star=6000*u.K, rad_star=1*u.solRad, dist=1.5*u.pc,
                        wv=4*u.micron, exp_time=2000*u.second, throughput=.3):
         '''
-        *** Something in here is incorrect?***
-
+        ***Something in here is incorrect?***
         Returns the number of photons received by a detector based on the
         stellar and instrument parameters specified as arguments in astropy
         units.
 
         Remember that photon counting has Poisson-type error, so photon noise is
-        the square root of this function's result. For a fuller explanation of
-        the process, see my notes in `subtract_psfs.ipynb`.
+        the square root of this function's result. A fuller explanation of the
+        process is available in `subtract_psfs.ipynb` (coming soon?).
         '''
         # interpet unitless quantities (e.g. source_proj below) in radians
         u.set_enabled_equivalencies(u.dimensionless_angles())
@@ -99,12 +95,14 @@ class SubtractImages(InjectCompanion):
         Use a a Karhunen-Loève transform to create a set of basis vectors from a
         reference library to be used for KLIP projection later on.
 
-        `ref` is a numpy array (not HDUList) of some number of reference images.
+        Argument `ref` is a numpy array (not HDUList) of some number of
+        reference images.
 
-        `explain` is the fraction of variance you want explained by `ref`'s
-        eigenvalues, throwing out those aren't needed after the KL transform.
+        Argument `explain` is the fraction of variance you want explained by
+        `ref`'s eigenvalues, throwing out those aren't needed after the KL
+        transform.
 
-        `modes` is the explicit (maximum) number of eigenvalues to keep.
+        Argument `modes` is the explicit maximum number of eigenvalues to keep.
 
         (You can use either `explain` or `modes`, but not both.)
 
@@ -145,13 +143,17 @@ class SubtractImages(InjectCompanion):
 
     def _project_onto_basis(self, target, Z_trim, verbose=False):
         '''
-        Use the output of self._get_klip_basis() for a particular set of
-        reference images to project a target image onto a KL basis to estimate
-        PSF intensity.
+        Help estimate PSF intensity by projecting a target image onto a KL
+        basis made from the reference images.
 
-        (Separating the two self.*basis methods helps with the speed of
+        Argument `target` is a 2D array representing a slice from some target
+        observation's data cube of images.
+
+        Argument `Z_trim` is the result of self._get_klip_basis() for the
+        target image's reference image library at the same wavelength.
+        Separating that method from this one helps with the speed of
         self._generate_klip_proj() since target images with the same wavelength
-        will also share the same library of reference images.)
+        share the same library of reference images.
         '''
         my_pr = lambda *args, **kwargs: (print(*args, **kwargs)
                                          if verbose else None)
@@ -170,8 +172,8 @@ class SubtractImages(InjectCompanion):
     def _generate_klip_proj(self, cube_list, verbose=True):
         '''
         Generates a HDUList of KLIP projections for every slice of each
-        post-padded target image data cube. The result is used in
-        `self.plot_subtraction()` and `self.plot_contrasts()`.
+        post-padded target image data cube. The result is used in the
+        post-subtraction plotting methods.
 
         Argument `cube_list` is an HDUList of *aligned*, NaN-less data cubes.
         `self.stackable_cubes` is usually the only appropriate choice here.
@@ -217,11 +219,11 @@ class SubtractImages(InjectCompanion):
 
     def _generate_theo_klip_proj(self, cube_list, fine_ref_cubes, verbose=True):
         '''
-        **Exclusively for theoretically-aligned HDULists.** Produces the same
-        output as `self._generate_klip_proj()` -- an HDUList of KLIP
-        projections for every slice of each post-padded target image data cube.
-        The result is used in `self.plot_subtraction()` and
-        `self.plot_contrasts()`.
+        **Exclusively for theoretically-aligned HDULists.**
+
+        Produces the same output as `self._generate_klip_proj()` -- an HDUList
+        of KLIP projections for every slice of each post-padded target image
+        data cube. The result is used in the post-subtraction plotting methods.
 
         Argument `cube_list` is an HDUList of *aligned*, NaN-less data cubes.
         `self.stackable_cubes` is usually the only appropriate argument here;
@@ -229,8 +231,8 @@ class SubtractImages(InjectCompanion):
 
         Argument `fine_ref_cubes` is a list of 4D arrays. Each array is a set of
         "fine-aligned" reference cubes that was made to match a certain target.
-        The references in index 0 of `fine_ref_cubes` match with the target
-        cube at index len(self.positions) of `cube_list`, and so on.
+        The references in index -1 of `fine_ref_cubes` match with the target
+        cube at index -1 of `cube_list`, and so on.
 
         Argument `verbose` is a boolean that, when True, allows the method to
         print progress messages.
@@ -272,19 +274,13 @@ class SubtractImages(InjectCompanion):
         every available wavelength over a few variations of the target images:
 
         1. The radial profile of standard deviation in the original target
-        images ("pre-subtraction")
+        images ("pre-subtraction", from `self.pre_prof_hdu`)
         2. The radial profile of standard deviation in the original target
-        images minus their corresponding KLIP projections ("post-subtraction")
-        3. The photon noise...
-        (STILL WORKING ON THIS. NOT THE RADIAL PROFILE, BUT...)
+        images minus their corresponding KLIP projections ("post-subtraction",
+        from `self.post_prof_hdu`)
+        3. The photon noise (INCOMPLETE)
         4. The radial profile of average pixel value in the original target
-        image
-
-        Argument `cube_list` is an HDUList of *aligned*, NaN-less data cubes.
-        `self.stackable_cubes` is usually the only appropriate choice here.
-
-        Argument `verbose` is a boolean that, when True, allows the method to
-        print progress messages.
+        image (from `self.pre_avg_hdu`).
 
         All of these are normalized by the brightest pixel in the original
         target image. Each of these measurements is its own HDUList with length
@@ -292,6 +288,12 @@ class SubtractImages(InjectCompanion):
         stack of 2D separation/contrast arrays (in that order), the number in
         the stack matches the number of wavelength slices available in
         self.stackable_cubes.
+
+        Argument `cube_list` is an HDUList of *aligned*, NaN-less data cubes.
+        `self.stackable_cubes` is usually the only appropriate choice here.
+
+        Argument `verbose` is a boolean that, when True, allows the method to
+        print progress messages.
         '''
         print_ast = lambda text: print('********', text, '********', sep='\n')
         my_pr = lambda txt: print_ast(txt) if verbose else None
@@ -358,7 +360,7 @@ class SubtractImages(InjectCompanion):
                 # (incl. average intensity per radius of pre-subtracted target)
                 with warnings.catch_warnings(record=True) as w:
                     # ignore warning on std dev of empty array in poppy/utils.py
-                    warnings.simplefilter('ignore') # line ~647
+                    warnings.simplefilter('ignore') # line ~647 in that file
                     rad, pre_prof = rad_prof(cube_list, stddev=True,
                                              center=norm_ind, maxradius=max_rad,
                                              ext=im, slice=sl)
@@ -373,7 +375,7 @@ class SubtractImages(InjectCompanion):
                                              ext=im, slice=sl)
 
                     # limit stddevs to points with non-NaN, nonzero contrasts
-                    # (also ignore warning on using greater-than with NaN)
+                    # (also ignore warning on using '>' with NaN)
                     nonz = np.flatnonzero((~np.isnan(pre_prof)) & (pre_prof>0))
 
                     rad = rad[nonz]
