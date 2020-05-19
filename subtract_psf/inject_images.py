@@ -246,7 +246,7 @@ class InjectCompanion:
             else:
                 raise ValueError('When calling from a `PreInjectImages()` '
                                  'instance, you must include spectra; scaling '
-                                 'by scene\'s standard deviation is '
+                                 "by scene's standard deviation is "
                                  'unavailable.')
         else:
             raise ValueError('You must either provide `comp_scale` OR a '
@@ -263,13 +263,14 @@ class InjectCompanion:
         my_pr('injecting companion with ' + msg1 + 'intensity' + msg2 + '.')
 
         # II. Translate the companion images
+        pix_len = .1
         if separation is None:
             # randomly generate the companion's x/y separation
             s_y, s_x, separation = self._choose_random_sep(tgt_imgs)
-        else:
-            pix_len = .1
             pix_sep = np.round(separation / pix_len)
+        else:
             theta = np.deg2rad(position_angle)
+            pix_sep = np.round(separation / pix_len)
 
             # trigonometrically convert separation magnitude to x/y separations,
             # using astronomical convention where PA = 0 is north/up
@@ -326,7 +327,23 @@ class InjectCompanion:
         # stellar spectrum once that's implemented so the same behavior is
         # present in both the companion=False/True cases of plot_subtraction()
 
-        # IV. Build a new HDUList with the injected images
+        # IV. Save companion's pixel position angle using law of cosines:
+        # c^2 = a^2 + b^2 - 2*a*b*cos(theta) -> c^2 = 2*a^2 * (1 - cos(theta))
+        # (where a = b = pix_sep and c is companion to north point pixel dist.)
+        comp_to_north = np.hypot(pix_sep - s_y, 0 - s_x)
+
+        # to get theta, the actual position angle, we need an inverse cosine.
+        # ensure the coord given as its argument is in arccos' domain (-1 to 1)
+        coord = ( -comp_to_north**2 / (2 * pix_sep**2) ) + 1
+        coord = -1 if -1 > coord else 1 if 1 < coord else coord
+        actual_PA = np.rad2deg(np.arccos(coord))
+
+        # then, since arccos' range is only 0-180 degrees, account for 180-360.
+        # it gives correct angle/wrong sign in that case (neg. s_x), so flip it
+        if s_x > 0:
+            actual_PA *= -1
+
+        # V. Build a new HDUList with the injected images
         # in each cube, multiply each wavelength slice by its respective scaling
         # (add new axes to slices_scaled so dims work for array broadcasting)
         cmp_imgs *= slices_scaled[:, :, np.newaxis, np.newaxis]
@@ -349,6 +366,8 @@ class InjectCompanion:
                                        'pixel location')
             cube.header['PIXCOMPX'] = (s_x, "this + PIXSTARX is companion's X "
                                        'pixel location')
+            cube.header['POSANGLE'] = (actual_PA, "angle between companion and "
+                                       'north pixels, deg.')
 
             if got_spectra:
                 for n, ratio in enumerate(slices_scaled_1x):
