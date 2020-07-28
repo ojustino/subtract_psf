@@ -29,7 +29,7 @@ See [`introduction.ipynb`](
   https://github.com/ojustino/subtract_psf/blob/master/notebooks/introduction.ipynb)
 for a quick start and
 [`inject_kappa_and.ipynb`](
-  https://github.com/ojustino/subtract_psf/blob/master/notebooks/introduction.ipynb)
+  https://github.com/ojustino/subtract_psf/blob/master/notebooks/inject_kappa_and.ipynb)
 for a worked example.
 
 #### License:
