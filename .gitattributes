@@ -1,0 +1,4 @@
+# prevent Jupyter Notebooks from dominating language stats
+# https://github.com/github/linguist#using-gitattributes
+notebooks/*.ipynb linguist-language=Python
+notebooks/compare_aligns.ipynb linguist-language=Jupyter-Notebook
